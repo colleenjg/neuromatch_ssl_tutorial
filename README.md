@@ -11,7 +11,7 @@ This repository contains a subset of the [dSprites dataset](https://github.com/d
 [Tutorial Colab](https://colab.research.google.com/drive/11-kf_meS8KrH7pnmYMD-mz5os60tDnaF?usp=sharing)
 
 ## Tasks
-- [] Build conv. encoder backbone 
+- [ ] Build conv. encoder backbone 
 - [] Build supervised / AE / VAE / SimCLR on top
 - [] Pretrain models and place on github for loading into colab
 - [] Place scripts on github to load into colab
