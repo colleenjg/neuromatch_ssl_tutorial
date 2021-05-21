@@ -12,7 +12,7 @@ This repository contains a subset of the [dSprites dataset](https://github.com/d
 
 ## Tasks
 - [ ] Build conv. encoder backbone 
-- [] Build supervised / AE / VAE / SimCLR on top
-- [] Pretrain models and place on github for loading into colab
-- [] Place scripts on github to load into colab
-- [] Create exercises
+- [ ] Build supervised / AE / VAE / SimCLR on top
+- [ ] Pretrain models and place on github for loading into colab
+- [ ] Place scripts on github to load into colab
+- [ ] Create exercises
