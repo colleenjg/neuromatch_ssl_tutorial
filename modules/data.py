@@ -52,6 +52,8 @@ class dSpritesDataset():
         - num_latent_class_values (1D np array): number of theoretically 
             possible values per latent, ordered as latent class names.
         - title (str): dataset title
+        - shape_map (dict): mapping of shape values (1, 2, 3) to shape names 
+            ("square", "oval", "heart") 
         """
 
         metadata = self.npz["metadata"][()]
@@ -63,6 +65,12 @@ class dSpritesDataset():
         self.latent_class_values = metadata["latents_possible_values"]
         self.num_latent_class_values = metadata["latents_sizes"]
         self.title = metadata["title"]
+
+        self.shape_name_map = {
+            1: "square",
+            2: "oval",
+            3: "heart"
+        }
         
 
     def _check_class_name(self, latent_class_name="shape"):
@@ -202,6 +210,27 @@ class dSpritesDataset():
                 )
             
         return latent_values
+
+
+    def get_shapes_from_values(self, shape_values):
+        """
+        self.get_shapes_from_values()
+
+        Returns shape name for each numerical shape value.
+
+        Required args:
+        - shape_values (array-like): numerical shape values (default: None).
+        
+        Returns:
+        - shape_names (list): shape name for each numerical shape value
+        """
+
+        if set(shape_values) - set([1, 2, 3]):
+            raise ValueError("Numerical shape values include only 1, 2 and 3.")
+
+        shape_names = [self.shape_name_map[int(value)] for value in shape_values]
+
+        return shape_names
 
 
 
