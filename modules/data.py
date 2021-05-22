@@ -1,5 +1,6 @@
 import os
 
+from matplotlib import pyplot as plt
 import numpy as np
 from PIL import Image
 import torch
@@ -232,6 +233,58 @@ class dSpritesDataset():
 
         return shape_names
 
+
+    def show_images(self, indices=None, num_images=10, randst=None):
+        """
+        self.show_images()
+
+        Plots dSprites images, as well as their latent values.
+
+        Optional args:
+        - indices (array-like): indices of images to plot. If None, they are sampled randomly.
+            (default: None)
+        - num_images (int): number of images to sample and plot, if indices is None.
+            (default: 10)
+        - randst (np.random.RandomState): seed or random state to use if sampling images.
+            If None, the global state is used.
+            (default: None)
+        """
+
+        if indices is None:
+            if randst is None:
+                randst = np.random
+            elif isinstance(randst, int):
+                randst = np.random.RandomState(randst)
+            indices = randst.choice(np.arange(len(self.images)), num_images, replace=False)
+        else:
+            num_images = len(indices)
+
+        imgs = self.images[indices]
+        latent_values = self.get_latent_values(indices)
+        ncols = np.min([num_images, 5])
+        nrows = int(np.ceil(num_images / ncols))
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols * 2.2, nrows * 2.2))
+        axes = axes.flatten()
+
+        # retrieve shape names
+        shape_names = self.get_shapes_from_values(latent_values[:, 0])
+
+        fig.suptitle(f"{num_images} images sampled from the dSprites dataset", y=1.04)
+        for ax_i, ax in enumerate(axes):
+            if ax_i < num_images:
+                ax.imshow(imgs[ax_i], cmap='Greys_r',  interpolation='nearest')
+                img_latent_values = [f"{value:.2f}" for value in latent_values[ax_i]]
+                img_latent_values[0] = f"{latent_values[ax_i, 0]} ({shape_names[ax_i]})"
+                if not (ax_i % ncols):
+                    title = "\n".join([f"{name}: {value}" for name, value in zip(
+                        self.latent_class_names, img_latent_values)])
+                else:
+                    title = "\n".join(img_latent_values)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_xlabel(title, fontsize="x-small")
+            else:
+                ax.axis('off')
 
 
 class CustomTorchDataset(torch.utils.data.Dataset):
