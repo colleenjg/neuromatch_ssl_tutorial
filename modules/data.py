@@ -6,7 +6,7 @@ import torch
 import torchvision
 
 
-DEFAULT_DATASET_NPZ_PATH = os.path.join("..", "dsprites", "dsprites_subset.npz")
+DEFAULT_DATASET_NPZ_PATH = os.path.join("dsprites", "dsprites_subset.npz")
 
 
 class dSpritesDataset():
@@ -47,9 +47,8 @@ class dSpritesDataset():
         - description (str): dataset description
         - version (str): version number
         - latent_class_names (tuple): ordered latent class names
-        - latent_class_values (dict): possible latent class 
-            values for each latent class, organized in 1D numpy arrays, 
-            under latent class name keys. 
+        - latent_class_values (dict): latent values for each latent class, 
+            organized in 1D numpy arrays, under latent class name keys. 
         - num_latent_class_values (1D np array): number of theoretically 
             possible values per latent, ordered as latent class names.
         - title (str): dataset title
@@ -65,6 +64,22 @@ class dSpritesDataset():
         self.num_latent_class_values = metadata["latents_sizes"]
         self.title = metadata["title"]
         
+
+    def _check_class_name(self, latent_class_name="shape"):
+        """
+        self._check_class_name()
+
+        Raises an error if latent_class_name is not recognized.
+
+        Optional args:
+        - latent_class_name (str): name of latent class to check. (default: "shape")
+        """
+        if latent_class_name not in self.latent_class_names:
+            latent_names_str = ", ".join(self.latent_class_names)
+            raise ValueError(
+                f"{latent_class_name} not recognized as a latent class name. "
+                f"Must be in: {latent_names_str}."
+                )
 
     def get_latent_name_idxs(self, latent_class_names=None):
         """
@@ -84,30 +99,25 @@ class dSpritesDataset():
         if latent_class_names is None:
             return np.arange(len(self.latent_class_names))
 
-        if not isinstance(latent_class_names, list):
+        if not isinstance(latent_class_names, (list, tuple)):
             latent_class_names = [latent_class_names]       
         
         latent_name_idxs = []
         for latent_class_name in latent_class_names:
-            if latent_class_name not in self.latent_class_names:
-                latent_names_str = ", ".join(self.latent_class_names)
-                raise ValueError(
-                    f"{latent_class_name} not recognized as a latent name. "
-                    f"Must be in: {latent_names_str}."
-                    )
+            self._check_class_name(latent_class_name)
             latent_name_idxs.append(self.latent_class_names.index(latent_class_name)) 
 
         return latent_name_idxs  
 
 
-    def get_latent_values(self, class_indices=None, latent_class_names=None):
+    def get_latent_classes(self, indices=None, latent_class_names=None):
         """
-        self.get_latent_values()
+        self.get_latent_classes()
 
-        Returns latent class values.
+        Returns latent classes for each image.
 
         Optional args:
-        - class_indices (array-like): indices for which to return latent 
+        - indices (array-like): image indices for which to return latent 
             class values. Order is preserved. If None, all are returned 
             (default: None).
         - latent_class_names (str or list): name(s) of latent class(es) 
@@ -115,15 +125,83 @@ class dSpritesDataset():
             If None, values for all latents are returned. (default: None)
         
         Returns:
-        - (2D np array): array of latent class values (img x latent class)
+        - (2D np array): array of latent classes (img x latent class)
         """
 
-        if class_indices is not None:
-            class_indices = np.asarray(class_indices)
+        if indices is not None:
+            indices = np.asarray(indices)
+        else:
+            indices = slice(None)
 
         latent_class_name_idxs = self.get_latent_name_idxs(latent_class_names)
 
-        return self.latent_class_values[class_indices][:, latent_class_name_idxs]
+        return self.latent_classes[indices][:, latent_class_name_idxs]
+
+
+    def get_latent_values_from_classes(self, latent_classes, latent_class_name="shape"):
+        """
+        self.get_latent_values()
+
+        Returns latent class values for each image.
+
+        Required args:
+        - latent_classes (1D np array): array of class values for each image
+        
+        Optional args:
+        - latent_class_name (str): name of latent class for which to return 
+            latent class values. (default: "shape")
+        
+        Returns:
+        - (2D np array): array of latent class values (img x latent class)
+        """
+
+        self._check_class_name(latent_class_name)
+
+        latent_classes = np.asarray(latent_classes)
+
+        if (latent_classes < 0).any():
+            raise ValueError("Classes cannot be below 0.")
+        if (latent_classes > len(self.latent_class_values[latent_class_name])).any():
+            raise ValueError("Classes cannot exceed the number of class "
+                "values for the latent class.")
+
+        return self.latent_class_values[latent_class_name][latent_classes]
+
+
+    def get_latent_values(self, indices=None, latent_class_names=None):
+        """
+        self.get_latent_values()
+
+        Returns latent class values for each image.
+
+        Optional args:
+        - class_indices (array-like): image indices for which to return 
+            latent class values. Order is preserved. If None, all are 
+            returned (default: None).
+        - latent_class_names (str or list): name(s) of latent class(es) 
+            for which to return latent class values. Order is preserved. 
+            If None, values for all latents are returned. (default: None)
+        
+        Returns:
+        - latent_values (2D np array): array of latent class values 
+            (img x latent class)
+        """
+
+        latent_classes = self.get_latent_classes(indices, latent_class_names)
+
+        if latent_class_names is None:
+            latent_class_names = self.latent_class_names
+
+        if not isinstance(latent_class_names, (list, tuple)):
+            latent_class_names = [latent_class_names]
+        
+        latent_values = np.empty_like(latent_classes).astype(float)
+        for l, latent_class_name in enumerate(latent_class_names):
+            latent_values[:, l] = self.get_latent_values_from_classes(
+                latent_classes[:, l], latent_class_name
+                )
+            
+        return latent_values
 
 
 
