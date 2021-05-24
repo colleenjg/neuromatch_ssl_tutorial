@@ -6,6 +6,8 @@ from PIL import Image
 import torch
 import torchvision
 
+from . import plot_util
+
 
 DEFAULT_DATASET_NPZ_PATH = os.path.join("dsprites", "dsprites_subset.npz")
 
@@ -22,6 +24,7 @@ class dSpritesDataset():
         - npz (np.lib.bpyio.NpzFile): zipped numpy data file
         - images (3D np array): images (image x height x width)
         - latent_classes (2D np array): latent class values for each image (image x latent)
+        - num_images (int): number of images in the dataset
         """
 
         self.dataset_path = dataset_path
@@ -29,6 +32,7 @@ class dSpritesDataset():
 
         self.images = self.npz["imgs"][()]
         self.latent_classes = self.npz["latents_classes"][()]
+        self.num_images = len(self.images)
         
         self._load_metadata()
 
@@ -89,6 +93,7 @@ class dSpritesDataset():
                 f"{latent_class_name} not recognized as a latent class name. "
                 f"Must be in: {latent_names_str}."
                 )
+
 
     def get_latent_name_idxs(self, latent_class_names=None):
         """
@@ -239,6 +244,7 @@ class dSpritesDataset():
         self.show_images()
 
         Plots dSprites images, as well as their latent values.
+        Adapted from https://github.com/deepmind/dsprites-dataset/blob/master/dsprites_reloading_example.ipynb
 
         Optional args:
         - indices (array-like): indices of images to plot. If None, they are sampled randomly.
@@ -251,28 +257,29 @@ class dSpritesDataset():
         """
 
         if indices is None:
+            if num_images > self.num_images:
+                raise ValueError("Cannot sample more images than the number of images "
+                    f"in the dataset ({self.num_images}).")
             if randst is None:
                 randst = np.random
             elif isinstance(randst, int):
                 randst = np.random.RandomState(randst)
-            indices = randst.choice(np.arange(len(self.images)), num_images, replace=False)
+            indices = randst.choice(np.arange(self.num_images), num_images, replace=False)
         else:
             num_images = len(indices)
 
         imgs = self.images[indices]
-        latent_values = self.get_latent_values(indices)
-        ncols = np.min([num_images, 5])
-        nrows = int(np.ceil(num_images / ncols))
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols * 2.2, nrows * 2.2))
+        fig, axes = plot_util.plot_dsprites_images(imgs)
+        ncols = axes.shape[1]
         axes = axes.flatten()
 
-        # retrieve shape names
+        # retrieve latent values and shape names
+        latent_values = self.get_latent_values(indices)
         shape_names = self.get_shapes_from_values(latent_values[:, 0])
 
         fig.suptitle(f"{num_images} images sampled from the dSprites dataset", y=1.04)
-        for ax_i, ax in enumerate(axes):
+        for ax_i, ax in enumerate(axes.flatten()):
             if ax_i < num_images:
-                ax.imshow(imgs[ax_i], cmap='Greys_r',  interpolation='nearest')
                 img_latent_values = [f"{value:.2f}" for value in latent_values[ax_i]]
                 img_latent_values[0] = f"{latent_values[ax_i, 0]} ({shape_names[ax_i]})"
                 if not (ax_i % ncols):
@@ -280,18 +287,14 @@ class dSpritesDataset():
                         self.latent_class_names, img_latent_values)])
                 else:
                     title = "\n".join(img_latent_values)
-                ax.set_xticks([])
-                ax.set_yticks([])
                 ax.set_xlabel(title, fontsize="x-small")
-            else:
-                ax.axis('off')
 
 
-class CustomTorchDataset(torch.utils.data.Dataset):
-    def __init__(self, X, y, torchvision_transforms=None, rgb_expand=False, resize=None, 
-                 simclr=False):
+class dSpritesTorchDataset(torch.utils.data.Dataset):
+    def __init__(self, X, y, torchvision_transforms=None, resize=None, rgb_expand=False, 
+                 simclr=False, spijk=None, simclr_transforms=None):
         """
-        Initialized a custom Torch dataset.
+        Initialized a custom Torch dataset for dSprites.
 
         Required args:
         - X (2 or 3D np array): image array (channels (optional) x height x width).
@@ -300,45 +303,60 @@ class CustomTorchDataset(torch.utils.data.Dataset):
         Optional args:
         - torchvision_transforms (torchvision.transforms): torchvision transforms to apply to X.
             (default: None)
-        - rgb_expand (bool): if True, X is expanded to include 3 identical channels. Applied 
-            after any torchvision_tranforms. (default: False)
         - resize (None or int): if not None, should be an int, namely the size to which X is 
             expanded along its height and width. (default: None)
-        - simclr (bool): if True, specific SimCLR transformations are applied. Overrides any other 
-            transforms. See self._apply_simclr_transforms(). (default: False)
+        - rgb_expand (bool): if True, X is expanded to include 3 identical channels. Applied 
+            after any torchvision_tranforms. (default: False)
+        - simclr (bool or str): if True, SimCLR-specific transformations are applied. (default: False)
+        - spijk (str): If not None, the SimCLR transforms are drawn from this implementation 
+            (https://github.com/Spijkervet/SimCLR), using either "train" or "test" transforms, as 
+            specified. All other transforms are overridden. Ignored if simclr is False. (default: None) 
+        - simclr_transforms (torchvision.transforms): SimCLR-specific transforms. Used only if simclr 
+            is True, and spikj is None. If None, default SimCLR transforms are applied. (default: None)
         """
 
         self.X = X
-        self.y = y
+        self.y = y.squeeze()
         
         if len(self.X) != len(self.y):
             raise ValueError("X and y must have the same length.")
         
         if len(self.X.shape) not in [2, 3]:
-            raise ValueError("Expect X to have 2 or 3 dimensions.")
+            raise ValueError("X should have 2 or 3 dimensions.")
 
         self.simclr = simclr
         if self.simclr:
-            rgb_expand = False
-            resize = None
-            torchvision_transforms = False
+            self.spijk = spijk
+            if self.spijk is not None:
+                rgb_expand = False
+                resize = None
+                torchvision_transforms = False
+                
+                if self.spijk not in ["train", "test"]:
+                    raise ValueError("spijk must be 'train' or 'test'.")
+                from simclr.modules.transformations import TransformsSimCLR
+                if self.spijk == "train":
+                    self.simclr_transforms = TransformsSimCLR(size=224).train_transform
+                else:
+                    self.simclr_transforms = TransformsSimCLR(size=224).test_transform
 
-            from simclr.modules.transformations import TransformsSimCLR
-            if self.simclr == "test":
-                self.simclr_transforms = TransformsSimCLR(size=224).test_transform
             else:
-                self.simclr_transforms = TransformsSimCLR(size=224).train_transform
+                self.simclr_transforms = simclr_transforms
+                if self.simclr_transforms is None:
+                    self.simclr_transforms = torchvision.transforms.RandomAffine(
+                        degrees=180, translate=(0.2, 0.2)
+                    ) # trying 180
 
         self.torchvision_transforms = torchvision_transforms
-
-        self.rgb_expand = rgb_expand
-        if self.rgb_expand and len(X.shape) != 2:
-            raise ValueError("If rgb_expand is True, X should have 2 dimensions.")
         
         self.resize = resize
         if self.resize is not None:
             self.resize_transform = torchvision.transforms.Resize(size=self.resize)
-        
+
+        self.rgb_expand = rgb_expand
+        if self.rgb_expand and len(X.shape) != 2:
+            raise ValueError("If rgb_expand is True, X should have 2 dimensions.")
+
         self.num_samples = len(self.X)
 
 
@@ -349,32 +367,43 @@ class CustomTorchDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         X = self.X[idx]
         y = self.y[idx]
-        
-        if self.torchvision_transforms:
-            X = self.torchvision_transforms(X)
-        if self.simclr:
-            X = self._apply_simclr_transforms(X)
+
+        if self.simclr == "spijk":
+            X = self._preprocess_simclr_spijk(X)
         else:
-            X = torch.toTensor(X)
+            if self.torchvision_transforms:
+                X = self.torchvision_transforms()(X)
 
-        if self.resize is not None:
-            X = self.resize_transform(X)
-        if self.rgb_expand:
-            X = self.X.unsqueeze(dim=-3).expand(3, -1, -1)
+            if self.resize is not None:
+                X = self.resize_transform(X)
 
-        y = torch.toTensor(y)
+            if self.rgb_expand:
+                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=0) 
 
-        return X, y
+        X = torchvision.transforms.ToTensor()(X)
+        y = torch.tensor(y)
+
+        if self.simclr:
+            X_aug = self.simclr_transforms(X)
+            return X, X_aug, y
+
+        else:
+            return X, y
 
 
-    def _apply_simclr_transforms(self, X):
+    def _preprocess_simclr_spijk(self, X):
         """
-        Applies SimCLR transformations for use with the SimCLR implementation available 
+        self._preprocess_simclr_spijk(X)
+        
+        Preprocess X for SimCLR transformations of the SimCLR implementation available 
         here: https://github.com/Spijkervet/SimCLR
 
         Required args:
         - X (2 or 3D np array): image array (height x width x channels (optional)). 
             All values expected to be between 0 and 1.
+        
+        Returns:
+        - X (3D np array): image array (height x width x channels).
         """
 
         if len(X.shape) == 2:
@@ -389,7 +418,88 @@ class CustomTorchDataset(torch.utils.data.Dataset):
 
         X = Image.fromarray(np.uint8(X * 255)).convert("RGB")
 
-        X = self.simclr_transforms(X)
-
         return X
+
+
+    def show_images(self, indices=None, num_images=10, ncols=5, randst=None):
+        """
+        self.show_images()
+
+        Plots dSprites images, as well as their augmentations if applicable.
+
+        Optional args:
+        - indices (array-like): indices of images to plot. If None, they are sampled randomly.
+            (default: None)
+        - num_images (int): number of images to sample and plot, if indices is None.
+            (default: 10)
+        - ncols (int): number of columns to plot. (default: 5)
+        - randst (np.random.RandomState): seed or random state to use if sampling images.
+            If None, the global state is used. (Does not control SimCLR transformations.)
+            (default: None)
+        """
+
+        if indices is None:
+            if num_images > self.num_samples:
+                raise ValueError("Cannot sample more images than the number of images "
+                    f"in the dataset ({self.num_samples}).")
+            if randst is None:
+                randst = np.random
+            elif isinstance(randst, int):
+                randst = np.random.RandomState(randst)
+            indices = randst.choice(np.arange(self.num_samples), num_images, replace=False)
+        else:
+            num_images = len(indices)
+
+        Xs = []
+        if self.simclr:
+            X_augs = []
+
+        for idx in indices:
+            if self.simclr:
+                X, X_aug, _ = self[idx]
+                X_augs.append(X_aug.numpy())
+            else:
+                X, _ = self[idx]
+            Xs.append(X.numpy())
+        
+        if len(indices) and len(X.shape) == 3:
+            Xs = np.mean(Xs, axis=1).tolist() # across channels
+            if self.simclr:
+                X_augs = np.mean(X_augs, axis=1).tolist()
+
+        plot_Xs = Xs
+        aug_str = ""
+        if self.simclr:
+            aug_str = " and augmentations"
+            plot_Xs = []
+            ncols = np.min([len(Xs), ncols])
+            n_sets = int(np.ceil(len(Xs) / ncols))
+            for i in range(n_sets):
+                extend_Xs = Xs[i * ncols : (i + 1) * ncols]
+                extend_X_augs = X_augs[i * ncols : (i + 1) * ncols]
+                padding = [None] * (ncols - len(extend_Xs))
+
+                plot_Xs.extend(extend_Xs + padding + extend_X_augs + padding)
+
+        fig, axes = plot_util.plot_dsprites_images(plot_Xs, ncols=ncols)
+        fig.suptitle(f"{num_images} dataset images{aug_str}", y=1.04)
+        
+        if self.simclr:
+            x_left = axes[0, 0].get_position().x0
+            x_right = axes[-1, -1].get_position().x1
+            x_ext = (x_right - x_left) / 30
+            for r, row_start_ax in enumerate(axes[:, 0]):
+                ylabel = "Images" if not r % 2 else "Augm."
+                row_start_ax.set_ylabel(ylabel)
+
+                if r != 0 and not r % 2:
+                    top_ax_y = axes[r - 1, 0].get_position().y0
+                    bot_ax_y = axes[r, 0].get_position().y1
+                    y = np.mean([bot_ax_y, top_ax_y])
+
+                    line = plt.Line2D(
+                        [x_left - x_ext, x_right + x_ext], [y, y], 
+                        transform=fig.transFigure, color="black"
+                        )
+                    fig.add_artist(line)
 

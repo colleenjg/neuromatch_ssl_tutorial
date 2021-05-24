@@ -28,34 +28,34 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
         if freeze_encoder:
             self.freeze_encoder()
 
-    def _define_encoder(self):
-        self.encoder = torch.nn.Sequential(
-            self.conv1, 
-            self.bn1,
-            self.relu,
-            self.maxpool,
+    # def _define_encoder(self):
+    #     self.encoder = torch.nn.Sequential(
+    #         self.conv1, 
+    #         self.bn1,
+    #         self.relu,
+    #         self.maxpool,
 
-            self.layer1, 
-            self.layer2, 
-            self.layer3, 
-            self.layer4, 
+    #         self.layer1, 
+    #         self.layer2, 
+    #         self.layer3, 
+    #         self.layer4, 
 
-            self.avgpool
+    #         self.avgpool
         
-                x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+    #             x = self.conv1(x)
+    #     x = self.bn1(x)
+    #     x = self.relu(x)
+    #     x = self.maxpool(x)
 
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+    #     x = self.layer1(x)
+    #     x = self.layer2(x)
+    #     x = self.layer3(x)
+    #     x = self.layer4(x)
 
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
+    #     x = self.avgpool(x)
+    #     x = torch.flatten(x, 1)
         
-        )
+    #     )
 
     def forward_clf(self, x):
         z = self.encoder(x)
