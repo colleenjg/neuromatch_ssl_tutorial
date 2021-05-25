@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from PIL import Image
 import torch
+from torch import nn
 import torchvision
 
 from . import plot_util
@@ -12,18 +13,86 @@ from . import plot_util
 DEFAULT_DATASET_NPZ_PATH = os.path.join("dsprites", "dsprites_subset.npz")
 
 
-def train_test_split_idx(dataset, fraction_train=0.8, randst=None):
+def get_biased_indices(dataset, indices, bias="shape_posX", control=False, randst=None):
+    """
+    get_biased_indices(dataset, indices)
+
+    Returns indices after removing those rejected given the requested bias. For example, 
+    if the bias is 'heart_right', the indices of any images where the heart is on the right 
+    are removed.
+
+    Required args:
+    - dataset (torch dSprites dataset): dSprites torch dataset
+    - indices (1D array): dataset image indices
+
+    Optional args:
+    - bias (str): way to bias the dataset subset defined by the indices.
+        'heart_left': only include hearts on the left
+        'shape_posX': correlate shape to posX
+        (default: "heart_left")
+    - control (bool): if True, the same number of items are excluded, as determined by the bias, 
+        but they are randomly selected. (default: False)
+    - randst (torch Generator or int): random state to use when splitting dataset. (default: None)
+
+    Returns 
+    """
+
+    if bias == "heart_left":
+        shapes, pos_Xs = dataset.dSprites.get_latent_values(
+            indices, latent_class_names=["shape", "posX"]
+            ).T
+
+        heart_value = dataset.dSprites.shape_name_to_value_map["heart"]
+        exclude_bool = ((shapes == heart_value) * (pos_Xs > 0.5))
+    
+    elif bias in ["shape_posX", "shape_posX_spaced"]:
+        shapes, posXs = dataset.dSprites.get_latent_values(
+            indices, latent_class_names=["shape", "posX"]
+            ).T
+       
+        exclude_bool = np.zeros_like(indices).astype(bool)
+        shape_vals = dataset.dSprites.latent_class_values["shape"]
+        posX_vals = np.sort(dataset.dSprites.latent_class_values["posX"])
+        if bias == "shape_posX":
+            posX_val_splits = np.array_split(posX_vals, len(shape_vals)) # unequal split allowed
+        elif bias == "shape_posX_spaced":
+            posX_val_edges = [[0, 0.3], [0.35, 0.65], [0.7, 1.0]]
+            posX_val_splits = [
+                [val for val in posX_vals if val >= edges[0] and val < edges[1]] 
+                    for edges in posX_val_edges]
+        for shape_val, pos_valX_split in zip(shape_vals, posX_val_splits):
+            exclude_bool += ((shapes == shape_val) * ~np.isin(posXs, pos_valX_split))
+    
+    else:
+        raise NotImplementedError("Only 'heart_left' and 'shape_posX' bias. are currently implemented.")
+
+    if control: # randomly permute the exclusion boolean
+        if isinstance(randst, int):
+            randst = torch.random.manual_seed(randst)
+        exclude_bool = exclude_bool[torch.randperm(len(exclude_bool), generator=randst)]
+
+    indices = indices[~exclude_bool]
+
+    return indices
+
+
+def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=None, control=False):
     """
     train_test_split_idx(dataset)
 
     Splits dataaset into train and test (or any other set of 2 complementary subsets).
 
     Required args:
-    - dataset (torch dataset): dataset
+    - dataset (torch dSprites dataset): dSprites torch dataset
 
     Optional args:
     - fraction_train (prop): fraction of dataset to allocate to training set. (default 0.8)
-    - randst (torch Generator or int): random state to use when splitting dataset. (None)
+    - randst (torch Generator or int): random state to use when splitting dataset. (default: None)
+    - train_bias (str): type of bias to introduce into the training dataset, after the split is done.
+        e.g., 'heart_left' (only hearts on left are included) or 'shape_posX' (shape and posX are 
+        correlated) (default: None)
+    - control (bool): if True, the same number of items are removed from the training dataset as 
+        the train_bias would determine, but they are randomly selected. (default: False)
 
     Returns:
     - train_dataset (torch dataset): training dataset
@@ -42,6 +111,12 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None):
     all_indices = torch.randperm(len(dataset), generator=randst)
 
     train_indices = all_indices[: train_size]
+    if train_bias is not None:
+        if hasattr(dataset, "indices"):
+            # implementing this just requires an extra indexing step
+            raise NotImplementedError("Training bias is implemented for full torch datasets only, "
+                "not subsets.")
+        train_indices = get_biased_indices(dataset, train_indices, bias=train_bias, control=control)
     test_indices = all_indices[train_size :]
 
     train_dataset = torch.utils.data.Subset(dataset, train_indices)
@@ -95,8 +170,10 @@ class dSpritesDataset():
         - num_latent_class_values (1D np array): number of theoretically 
             possible values per latent, ordered as latent class names.
         - title (str): dataset title
-        - shape_map (dict): mapping of shape values (1, 2, 3) to shape names 
-            ("square", "oval", "heart") 
+        - value_to_shape_name_map (dict): mapping of shape values (1, 2, 3) to 
+            shape names ("square", "oval", "heart") 
+        - shape_name_to_value_map (dict): mapping of shape names ("square", "oval", "heart") to
+            shape values (1, 2, 3)
         """
 
         metadata = self.npz["metadata"][()]
@@ -109,11 +186,15 @@ class dSpritesDataset():
         self.num_latent_class_values = metadata["latents_sizes"]
         self.title = metadata["title"]
 
-        self.shape_name_map = {
+        self.value_to_shape_name_map = {
             1: "square",
             2: "oval",
             3: "heart"
         }
+
+        self.shape_name_to_value_map = {
+            value: key for key, value in self.value_to_shape_name_map.items()
+            }
         
 
     def _check_class_name(self, latent_class_name="shape"):
@@ -272,7 +353,7 @@ class dSpritesDataset():
         if set(shape_values) - set([1, 2, 3]):
             raise ValueError("Numerical shape values include only 1, 2 and 3.")
 
-        shape_names = [self.shape_name_map[int(value)] for value in shape_values]
+        shape_names = [self.value_to_shape_name_map[int(value)] for value in shape_values]
 
         return shape_names
 
@@ -329,16 +410,16 @@ class dSpritesDataset():
 
 
 class dSpritesTorchDataset(torch.utils.data.Dataset):
-    def __init__(self, X, y, torchvision_transforms=None, resize=None, rgb_expand=False, 
-                 simclr=False, spijk=None, simclr_transforms=None):
+    def __init__(self, dSprites, target_latent="shape", torchvision_transforms=None, 
+                 resize=None, rgb_expand=False, simclr=False, spijk=None, simclr_transforms=None):
         """
-        Initialized a custom Torch dataset for dSprites.
+        Initialized a custom Torch dataset for dSprites, and sets attributes.
 
         Required args:
-        - X (2 or 3D np array): image array (channels (optional) x height x width).
-        - y (1D np array): targets
+        - dSprites (dSpritesDataset): dSprites dataset
 
         Optional args:
+        - target_latent (str): latent dimension to use as target. (default: "shape")
         - torchvision_transforms (torchvision.transforms): torchvision transforms to apply to X.
             (default: None)
         - resize (None or int): if not None, should be an int, namely the size to which X is 
@@ -351,10 +432,17 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
             specified. All other transforms are overridden. Ignored if simclr is False. (default: None) 
         - simclr_transforms (torchvision.transforms): SimCLR-specific transforms. Used only if simclr 
             is True, and spikj is None. If None, default SimCLR transforms are applied. (default: None)
+
+        Sets attributes:
+        - X (2 or 3D np array): image array (channels (optional) x height x width).
+        - y (1D np array): targets
+        ...
         """
 
-        self.X = X
-        self.y = y.squeeze()
+        self.dSprites = dSprites
+
+        self.X = self.dSprites.images
+        self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
         
         if len(self.X) != len(self.y):
             raise ValueError("X and y must have the same length.")
@@ -382,8 +470,8 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 self.simclr_transforms = simclr_transforms
                 if self.simclr_transforms is None:
                     self.simclr_transforms = torchvision.transforms.RandomAffine(
-                        degrees=180, translate=(0.2, 0.2)
-                    ) # trying 180
+                        degrees=180, translate=(0.2, 0.2), scale=(0.5,1.0)
+                    )
 
         self.torchvision_transforms = torchvision_transforms
         
@@ -542,8 +630,58 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                     fig.add_artist(line)
 
 
+def calculate_torch_rsm(features, features_comp=None, stack=False):
+
+    if stack:
+        if features_comp is None:
+            raise ValueError("stack can only be True if features_comp is not None.")
+        features = torch.cat((features, features_comp), dim=0)
+        features_comp = features
+
+    if features_comp is None:
+        features_comp = features
+    
+    rsm = nn.functional.cosine_similarity(
+        torch.flatten(features, start_dim=1).unsqueeze(0), 
+        torch.flatten(features_comp, start_dim=1).unsqueeze(1), 
+        dim=2
+        )
+    
+    return rsm
+
+
+def calculate_numpy_rsm(features, features_comp=None, stack=False):
+
+    if stack:
+        if features_comp is None:
+            raise ValueError("stack can only be True if features_comp is not None.")
+        features = np.concatenate((features, features_comp), axis=0)
+        features_comp = features
+
+    if features_comp is None:
+        features_comp = features
+
+    if features.shape != features_comp.shape:
+        raise ValueError("features and features_comp should have the same shape.")
+
+    dFeatures, sigmas = [], []
+    for sub_features in [features, features_comp]:
+        sub_features = sub_features.reshape(len(sub_features), -1) # flatten
+        sub_dFeatures = sub_features - np.mean(sub_features, axis=1) # center
+        sub_sigmas = np.sqrt(np.mean(sub_dFeatures ** 2, axis=1)) # calculate norm
+    
+        dFeatures.append(sub_dFeatures)
+        sigmas.append(sub_sigmas)
+
+    sigmas = np.maximum(np.product(sigmas), 1e-8) # raise minimum from 0
+
+    rsm = np.dot(dFeatures[0], dFeatures[1].T) / sigmas
+
+    return rsm
+
+
 def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None, 
-                       target_feature="shape"):
+                       target_latent="shape"):
     """
     plot_dsprites_rsms(dataset, rsms, target_class_values)
 
@@ -557,7 +695,7 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
 
     Optional args:
     - titles (list): title for each RSM. (default: None)
-    - target_feature (str): name of target latent class/feature. (default: "shape")
+    - target_latent (str): name of target latent class/feature. (default: "shape")
     """
 
     if isinstance(rsms, list):
@@ -578,20 +716,20 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
 
     _, axes = plot_util.plot_rsms(rsms, titles)
 
-    dataset._check_class_name(target_feature)
+    dataset._check_class_name(target_latent)
 
     for subax, sub_target_class_values in zip(axes.flatten(), target_class_values):
         
         # check that target classes are sorted, and collect unique values and where they start
         target_change_idxs = np.insert(np.where(np.diff(sub_target_class_values))[0] + 1, 0, 0)
         unique_values = [sub_target_class_values[i] for i in target_change_idxs]
-        if target_feature == "shape":
+        if target_latent == "shape":
             unique_values = dataset.get_shapes_from_values(unique_values)
-        elif target_feature == "scale":
+        elif target_latent == "scale":
             unique_values = [f"{value:.1f}" for value in unique_values]
         
         # place major ticks at class boundaries and class labels between
-        if target_feature in ["shape", "scale"]:
+        if target_latent in ["shape", "scale"]:
             edge_ticks = np.append(target_change_idxs, len(sub_target_class_values))
             label_ticks = target_change_idxs + np.diff(edge_ticks) / 2
 
@@ -612,12 +750,12 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
                     )
 
         else:
-            if target_feature == "orientation":
+            if target_latent == "orientation":
                 nticks = 9
-            elif target_feature in ["posX", "posY"]:
+            elif target_latent in ["posX", "posY"]:
                 nticks = 11
 
-            possible_values = dataset.latent_class_values[target_feature]            
+            possible_values = dataset.latent_class_values[target_latent]            
             min_val = possible_values.min()
             max_val = possible_values.max()
 
@@ -629,5 +767,5 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
                 axis.set_ticks(ticks)
                 axis.set_ticklabels(ticklabels)
 
-        subax.set_xlabel(target_feature, labelpad=10)
+        subax.set_xlabel(target_latent, labelpad=10)
 

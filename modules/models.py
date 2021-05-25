@@ -2,12 +2,15 @@ import numpy as np
 import torch
 from torch import nn
 import torchvision
+import tqdm
+
+from . import data
 
 
 class EncoderCore(nn.Module):
     def __init__(self, feat_size=84, input_dim=(1, 64, 64)):
         """
-        Initialized the core encoder network.
+        Initializes the core encoder network.
 
         Optional args:
         - feat_size (int): size of the final features layer (default: 84)
@@ -76,25 +79,149 @@ class EncoderCore(nn.Module):
         return feats
         
 
+def train_classifier(encoder, train_data, test_data, num_classes=3, 
+                     num_epochs=10, fraction_of_labels=1.0, batch_size=1000, 
+                     freeze_features=True, verbose=True, subset_seed=None, 
+                     use_cuda=True):
+    """
+    Function to train a linear classifier to predict classes from features.
+    
+    Required args:
+    - encoder (nn.Module): Encoder network instance for extracting features. 
+        Should have method get_features().
+    - train_data (torch dataset): Dataset comprising the training data.
+    - test_data (torch dataset): Dataset comprising the test data.
+    
+    Optional args:
+    - num_epochs (int): Number of epochs over which to train the classifier. 
+        (default: 10)
+    - num_classes (int): Number of data classes for classification. (default: 3)
+    - fraction_of_labels (float): Fraction of the total number of available 
+        labelled training data to use for training. (default: 1.0)
+    - batch_size (int): Batch size. (default: 1000)
+    - freeze_features (bool): If True, the feature encoder is frozen and only 
+        the classifier is trained. If False, the encoder is also trained. 
+        (default: True)
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - subset_seed (int): seed for selecting data subset, if applicable 
+        (default: None)
+    - verbose (bool): If True, classification accuracy is printed. 
+        (default: True)
 
-class ResNet18Classifier(torchvision.models.resnet.ResNet):
+    Returns: 
+    - classifier (nn.Linear): trained classification layer
+    - loss_arr (list): training loss at each epoch
+    - train_acc (float): final training accuracy
+    - test_acc (float): final test accuracy
+    """
 
-    def __init__(self, num_outputs=1, pretrained=True, freeze_encoder=True):
+
+    device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+
+    classifier = nn.Linear(encoder.feat_size, num_classes).to(device)
+
+    # Define datasets and dataloaders
+    train_data_subset, _ = data.train_test_split_idx(
+        train_data, fraction_train=fraction_of_labels, randst=subset_seed
+        ) # obtain subset
+    train_dataloader = torch.utils.data.DataLoader(
+        train_data_subset, batch_size=batch_size, shuffle=True
+        )
+    test_dataloader = torch.utils.data.DataLoader(
+        test_data, batch_size=batch_size
+        )
+    
+    # Define loss and optimizers
+    train_parameters = classifier.parameters()
+    if not freeze_features:
+        train_parameters = list(train_parameters) + list(encoder.parameters())
+
+    classification_optimizer = torch.optim.Adam(train_parameters, lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        classification_optimizer, T_max=100
+        )
+    loss_fn = nn.CrossEntropyLoss()
+    
+    # Train classifier on training set
+    loss_arr = []
+    for _ in tqdm(range(num_epochs)):
+        total_loss = 0
+        num_total = 0
+        for (X, y) in train_dataloader:
+            classification_optimizer.zero_grad()
+
+            if freeze_features:
+                features = encoder.get_features(X.to(device))
+            else:
+                features = encoder(X.to(device))
+
+            predicted_y_logits = classifier(features)
+            loss = loss_fn(predicted_y_logits, y.to(device))
+            loss.backward()
+            classification_optimizer.step()
+
+            total_loss += loss.item()
+            num_total += y.size(0)
+
+        loss_arr.append(total_loss / num_total)
+        scheduler.step()
+    
+    # Calculate prediction accuracy on training and test sets
+    accuracies = []
+    for i, dataloader in enumerate(train_dataloader, test_dataloader):
+        num_correct = 0
+        num_total = 0
+        for (X, y) in dataloader:
+            with torch.no_grad():
+                features = encoder.get_features(X.to(device))
+                predicted_y_logits = classifier(features)
+            
+            # identify predicted classes from logits
+            _, predicted_y = torch.max(predicted_y_logits, 1) 
+            num_correct += (predicted_y == y).sum()
+            num_total += y.size(0)
+            
+        accuracy = (100 * num_correct.cpu().numpy()) / num_total
+        accuracies.append(accuracy)
+
+    train_acc, test_acc = accuracies
+
+    if verbose:
+        chance = 100 / num_classes
+        if freeze_features:
+            train_str = "classifier"
+        else:
+            train_str = "encoder and classifier"
+
+        print(f"Network performance after {num_epochs} {train_str} training "
+          f"epochs (chance: {chance:.3f}%):\n"
+          f"    Training accuracy: {train_acc:.3f}%\n"
+          f"    Testing accuracy: {test_acc:.3f}%")
+
+    return classifier, loss_arr, train_acc, test_acc
+
+
+
+
+
+# class ResNet18Classifier(torchvision.models.resnet.ResNet):
+
+#     def __init__(self, num_outputs=1, pretrained=True, freeze_encoder=True):
         
-        self.super().__init__()
+#         self.super().__init__()
 
-        resnet18 = torchvision.models.resnet18(pretrained=pretrained, progress=False)
-        self.__dict__.update(resnet18.__dict__)
+#         resnet18 = torchvision.models.resnet18(pretrained=pretrained, progress=False)
+#         self.__dict__.update(resnet18.__dict__)
         
-        self.pretrained = pretrained
+#         self.pretrained = pretrained
 
-        self._define_encoder()
-        self.classifier = nn.Sequential(
-            init_logreg_classifier(self.num_encoder_outputs, num_outputs)
-            )
+#         self._define_encoder()
+#         self.classifier = nn.Sequential(
+#             init_logreg_classifier(self.num_encoder_outputs, num_outputs)
+#             )
 
-        if freeze_encoder:
-            self.freeze_encoder()
+#         if freeze_encoder:
+#             self.freeze_encoder()
 
     # def _define_encoder(self):
     #     self.encoder = nn.Sequential(
@@ -125,20 +252,20 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
         
     #     )
 
-    def forward_clf(self, x):
-        z = self.encoder(x)
-        z_flat = torch.flatten(z, 1)
-        y = self.classifier(z_flat)
+    # def forward_clf(self, x):
+    #     z = self.encoder(x)
+    #     z_flat = torch.flatten(z, 1)
+    #     y = self.classifier(z_flat)
 
-        return y
+    #     return y
 
-    def freeze_encoder(self):
-        for param in self.encoder.parameters():
-            param.requires_grad = False
+    # def freeze_encoder(self):
+    #     for param in self.encoder.parameters():
+    #         param.requires_grad = False
 
-    def unfreeze_encoder(self):
-        for param in self.encoder.parameters():
-            param.requires_grad = True
+    # def unfreeze_encoder(self):
+    #     for param in self.encoder.parameters():
+    #         param.requires_grad = True
 
 
 
@@ -310,3 +437,20 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
 
 #     return model, train_accuracy, test_accuracy
 
+# def load_pretrained_SimCLR():
+#     import os
+#     if not os.path.exists("SimCLR"):
+#         !git clone https://github.com/spijkervet/SimCLR.git --quiet
+#         !wget -o SimCLR/simclr_model.tar https://github.com/Spijkervet/SimCLR/releases/download/1.1/checkpoint_100.tar --quiet
+#         !python3 -m pip install SimCLR --quiet
+
+#     from simclr import SimCLR
+#     from simclr.modules import get_resnet
+#     from simclr.modules.transformations import TransformsSimCLR
+
+#     encoder = get_resnet("resnet18", pretrained=False)
+#     n_features = encoder.fc.in_features
+#     SIMCLR = SimCLR(encoder, 64, n_features)
+#     _ = SIMCLR.load_state_dict(torch.load("checkpoint_100.tar", map_location=torch.device(DEVICE)))
+
+#     return SIMCLR
