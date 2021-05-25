@@ -1,12 +1,80 @@
-from _typeshed import ReadableBuffer
+import numpy as np
 import torch
+from torch import nn
 import torchvision
 
-def init_logreg_classifier(num_inputs, num_outputs):
-    
-    model = torch.nn.Sequential(torch.nn.Linear(num_inputs, num_outputs))
 
-    return model
+class EncoderCore(nn.Module):
+    def __init__(self, feat_size=84, input_dim=(1, 64, 64)):
+        """
+        Initialized the core encoder network.
+
+        Optional args:
+        - feat_size (int): size of the final features layer (default: 84)
+        - input_dim (tuple): input image dimensions (channels, width, height) 
+            (default: (1, 64, 64))
+        """
+
+        super().__init__()
+
+        # check input dimensions provided
+        self.input_dim = tuple(input_dim)
+        if len(self.input_dim) == 3:
+            self.input_ch = self.input_dim[0]
+        elif len(self.input_dim) == 2:
+            self.input_ch = 1
+        else:
+            raise ValueError("input_dim should have length 2 (wid x hei) or "
+              "3 (ch x wid x hei).")
+
+        # convolutional component of the feature extractor
+        self.feature_extractor = nn.Sequential(
+            nn.Conv2d(in_channels=self.input_ch, out_channels=6, kernel_size=5, stride=1),
+            nn.ReLU(),
+            nn.AvgPool2d(kernel_size=2),
+            nn.BatchNorm2d(6,affine=False),
+            nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, stride=1),
+            nn.ReLU(),
+            nn.AvgPool2d(kernel_size=2),
+            nn.BatchNorm2d(16,affine=False)
+        )
+
+        # calculate size of the convolutional feature extractor output
+        self.feat_extr_output_size = self._get_feat_extr_output_size(self.input_dim)
+        self.feat_size = feat_size
+
+        # linear component of the feature extractor
+        self.linear_projections = nn.Sequential(
+            nn.Linear( self.feat_extr_output_size, 120),
+            nn.ReLU(),
+            nn.BatchNorm1d(120, affine=False),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.BatchNorm1d(84, affine=False),
+            nn.Linear(84, self.feat_size),
+            nn.ReLU(),
+            nn.BatchNorm1d(84, affine=False)
+        )
+
+    def _get_feat_extr_output_size(self, input_dim):
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, *input_dim)
+            output = self.feature_extractor(dummy_input).shape
+        return np.product(output)
+
+    def forward(self,X):
+        feats = self.feature_extractor(X)
+        feats = torch.flatten(feats, 1)
+        feats = self.linear_projections(feats)
+        return feats
+
+    def get_features(self,X):
+        with torch.no_grad():
+            feats = self.feature_extractor(X)
+            feats = torch.flatten(feats, 1)
+            feats = self.linear_projections(feats)
+        return feats
+        
 
 
 class ResNet18Classifier(torchvision.models.resnet.ResNet):
@@ -21,7 +89,7 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
         self.pretrained = pretrained
 
         self._define_encoder()
-        self.classifier = torch.nn.Sequential(
+        self.classifier = nn.Sequential(
             init_logreg_classifier(self.num_encoder_outputs, num_outputs)
             )
 
@@ -29,7 +97,7 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
             self.freeze_encoder()
 
     # def _define_encoder(self):
-    #     self.encoder = torch.nn.Sequential(
+    #     self.encoder = nn.Sequential(
     #         self.conv1, 
     #         self.bn1,
     #         self.relu,
@@ -143,3 +211,102 @@ class ResNet18Classifier(torchvision.models.resnet.ResNet):
 #     simclr.projector = simclr.classifier
 
 #     return simclr
+
+# def train_logistic_regression(model_type="vgg", target_feature="shape", 
+#                               num_epochs=10, batch_size=64, verbose=True):
+    
+#     X_flat_size = DSPRITES_DICT["imgs"][0].size
+#     if model_type in ["vgg", "vgg_untrained"]:
+#         pretrained = True
+#         if model_type == "vgg_untrained":
+#             pretrained = False
+#         model = load_vgg_classifier(target_feature=target_feature, pretrained=pretrained)
+#         transform = "to_RGB"
+#         classifier = model.classifier
+#     elif model_type in ["resnet", "resnet_untrained"]:
+#         pretrained = True
+#         if model_type == "resnet_untrained":
+#             pretrained = False
+#         model = load_resnet_classifier(target_feature=target_feature, pretrained=pretrained)
+#         transform = "to_RGB_size"
+#         classifier = model.classifier
+#     elif model_type == "raw_logreg":
+#         model = init_logreg_classifier(target_feature=target_feature)
+#         transform = None
+#         classifier = model
+#     elif model_type in ["vae", "ae"]:
+#         model = load_v_ae_classifier(target_feature=target_feature, model_type=model_type)
+#         transform = None
+#         classifier = model.classifier
+#     elif model_type == "simclr":
+#         model = load_simclr_classifier(target_feature=target_feature)
+#         transform = "simclr"
+#         classifier = model.classifier
+#     else:
+#         raise ValueError(f"Model type {model_type} not recognized. "
+#             "Must be 'vgg', 'vgg_untrained', 'vae', 'ae', 'simclr' or 'raw_logreg'.")
+
+#     # Retrieve dataloaders     
+#     train_dataloader, test_dataloader = init_dataloaders(
+#         target_feature=target_feature, batch_size=batch_size, 
+#         transform=transform, num_workers=0, seed=SEED
+#         )
+
+#     # Define loss and optimizers    
+#     model.to(DEVICE)
+#     classification_optimizer = torch.optim.Adam(
+#         classifier.parameters(), lr=1e-3
+#         )
+#     loss_fn = torch.nn.CrossEntropyLoss()
+
+#     model.train()
+
+#     # Train logistic regression on training set
+#     if verbose:
+#         print(f"Training logistic regression over {num_epochs} epochs...")
+        
+#     for epoch_num in range(num_epochs):
+#         for i, (X, y) in enumerate(train_dataloader):
+#             classification_optimizer.zero_grad()
+#             if model_type in ["raw_logreg", "vae", "ae"]:
+#                 X = X.view(-1, X_flat_size)
+#             y = y.to(DEVICE)
+#             if model_type == "simclr":
+#                 _, _, y_pred, _ = model(X.to(DEVICE), X.to(DEVICE))    
+#             else:
+#                 y_pred = model(X.to(DEVICE))
+#             loss = loss_fn(y_pred, y)
+#             loss.backward()
+#             classification_optimizer.step()
+  
+#     # Calculate prediction accuracy on training set and test set
+#     accuracies = []
+#     model.eval()
+#     for dataloader in [train_dataloader, test_dataloader]:
+#         correct = 0
+#         total = 0
+#         for (X, y) in dataloader:
+#             if model_type in ["raw_logreg", "vae", "ae"]:
+#                 X = X.view(-1, X_flat_size)
+#             y = y.to(DEVICE)
+#             with torch.no_grad():
+#                 if model_type == "simclr":
+#                     _, _, y_pred, _ = model(X.to(DEVICE), X.to(DEVICE))    
+#                 else:
+#                     y_pred = model(X.to(DEVICE))
+#             _, y_pred_class = torch.max(y_pred, 1)
+#             correct += (y_pred_class == y).sum()
+#             total += y.size(0)
+#         acc = (100 * correct.to("cpu").numpy()) / total
+#         accuracies.append(acc)
+      
+#     train_accuracy, test_accuracy = accuracies
+
+#     if verbose:
+#         chance = 100 / train_dataloader.dataset.num_outputs
+#         print(f"\nResults (chance: {chance:.2f}%):\n"
+#         f"    Training accuracy: {train_accuracy:.2f}%\n"
+#         f"    Testing accuracy: {test_accuracy:.2f}%")
+
+#     return model, train_accuracy, test_accuracy
+

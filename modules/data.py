@@ -12,6 +12,44 @@ from . import plot_util
 DEFAULT_DATASET_NPZ_PATH = os.path.join("dsprites", "dsprites_subset.npz")
 
 
+def train_test_split_idx(dataset, fraction_train=0.8, randst=None):
+    """
+    train_test_split_idx(dataset)
+
+    Splits dataaset into train and test (or any other set of 2 complementary subsets).
+
+    Required args:
+    - dataset (torch dataset): dataset
+
+    Optional args:
+    - fraction_train (prop): fraction of dataset to allocate to training set. (default 0.8)
+    - randst (torch Generator or int): random state to use when splitting dataset. (None)
+
+    Returns:
+    - train_dataset (torch dataset): training dataset
+    - test_dataset (torch dataset): test dataset
+    """
+
+
+    if 1 <= fraction_train <= 0:
+        raise ValueError("fraction_train must be between 0 and 1, inclusively.")
+
+    train_size = int(fraction_train * len(dataset))
+
+    if isinstance(randst, int):
+        randst = torch.random.manual_seed(randst)
+
+    all_indices = torch.randperm(len(dataset), generator=randst)
+
+    train_indices = all_indices[: train_size]
+    test_indices = all_indices[train_size :]
+
+    train_dataset = torch.utils.data.Subset(dataset, train_indices)
+    test_dataset = torch.utils.data.Subset(dataset, test_indices)
+
+    return train_dataset, test_dataset
+
+
 class dSpritesDataset():
     
     def __init__(self, dataset_path=DEFAULT_DATASET_NPZ_PATH):
@@ -502,4 +540,94 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                         transform=fig.transFigure, color="black"
                         )
                     fig.add_artist(line)
+
+
+def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None, 
+                       target_feature="shape"):
+    """
+    plot_dsprites_rsms(dataset, rsms, target_class_values)
+
+    Plots representation similarity matrices for dSprites data.
+
+    Required args:
+    - dataset (dSpritesDataset): dSprites dataset
+    - rsms (list): list of 2D RSMs arrays.
+    - target_class_values (list): list of target class values for each 
+        element in the corresponding RSM. 
+
+    Optional args:
+    - titles (list): title for each RSM. (default: None)
+    - target_feature (str): name of target latent class/feature. (default: "shape")
+    """
+
+    if isinstance(rsms, list):
+        if len(rsms) != len(target_class_values):
+            raise ValueError("Must pass as many target_class_values as rsms.") 
+        if not isinstance(titles, list) or len(titles) != len(rsms):
+            raise ValueError("Must pass as many titles as rsms.")
+    
+    else: # place in lists
+        rsms = [rsms]
+        target_class_values = [target_class_values]
+        titles = [titles]
+    
+    for r, rsm_target_class_values in enumerate(target_class_values):
+        sorter = np.argsort(rsm_target_class_values)
+        target_class_values[r] = rsm_target_class_values[sorter]
+        rsms[r] = rsms[sorter, sorter]
+
+    _, axes = plot_util.plot_rsms(rsms, titles)
+
+    dataset._check_class_name(target_feature)
+
+    for subax, sub_target_class_values in zip(axes.flatten(), target_class_values):
+        
+        # check that target classes are sorted, and collect unique values and where they start
+        target_change_idxs = np.insert(np.where(np.diff(sub_target_class_values))[0] + 1, 0, 0)
+        unique_values = [sub_target_class_values[i] for i in target_change_idxs]
+        if target_feature == "shape":
+            unique_values = dataset.get_shapes_from_values(unique_values)
+        elif target_feature == "scale":
+            unique_values = [f"{value:.1f}" for value in unique_values]
+        
+        # place major ticks at class boundaries and class labels between
+        if target_feature in ["shape", "scale"]:
+            edge_ticks = np.append(target_change_idxs, len(sub_target_class_values))
+            label_ticks = target_change_idxs + np.diff(edge_ticks) / 2
+
+            for axis, rotation in zip([subax.xaxis, subax.yaxis], ["horizontal", "vertical"]):
+                if rotation == "horizontal":
+                    kwargs = {"ha": "center"}
+                else:
+                    kwargs = {"va": "center"}
+
+                axis.set_ticks(edge_ticks)
+                axis.set_tick_params(width=2, length=10, which="major")
+                axis.set_ticklabels("", major=True)
+
+                axis.set_ticks(label_ticks, minor=True)
+                axis.set_tick_params(length=0, which="minor")
+                axis.set_ticklabels(
+                    target_class_values, minor=True, fontsize=14, rotation=rotation, **kwargs
+                    )
+
+        else:
+            if target_feature == "orientation":
+                nticks = 9
+            elif target_feature in ["posX", "posY"]:
+                nticks = 11
+
+            possible_values = dataset.latent_class_values[target_feature]            
+            min_val = possible_values.min()
+            max_val = possible_values.max()
+
+            ticks = np.linspace(0, len(sub_target_class_values), nticks)
+            ticklabels = np.linspace(min_val, max_val, nticks)
+            ticklabels = [f"{ticklabel:.1f}" for ticklabel in ticklabels]      
+
+            for axis in [subax.xaxis, subax.yaxis]:
+                axis.set_ticks(ticks)
+                axis.set_ticklabels(ticklabels)
+
+        subax.set_xlabel(target_feature, labelpad=10)
 
