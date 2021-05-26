@@ -440,9 +440,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         """
 
         self.dSprites = dSprites
-
-        self.X = self.dSprites.images
-        self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
+        if isinstance(self.dSprites,torch.utils.data.Subset):
+        	self.X = self.dSprites.dataset.X[self.dSprites.indices]
+        	self.y = self.dSprites.dataset.y[self.dSprites.indices]
+        else:
+	        self.X = self.dSprites.images
+	        self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
         
         if len(self.X) != len(self.y):
             raise ValueError("X and y must have the same length.")
