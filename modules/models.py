@@ -118,7 +118,10 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    encoder = encoder.to(device)
     classifier = nn.Linear(encoder.feat_size, num_classes).to(device)
+
+    simclr = True if train_data.dataset.simclr else False
 
     # Define datasets and dataloaders
     train_data_subset, _ = data.train_test_split_idx(
@@ -130,7 +133,7 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
     test_dataloader = torch.utils.data.DataLoader(
         test_data, batch_size=batch_size
         )
-    
+
     # Define loss and optimizers
     train_parameters = classifier.parameters()
     if not freeze_features:
@@ -147,7 +150,12 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
     for _ in tqdm(range(num_epochs)):
         total_loss = 0
         num_total = 0
-        for (X, y) in train_dataloader:
+        for iter_data in train_dataloader:
+            if simclr:
+                X, _, y = iter_data # ignore augmented X
+            else:
+                X, y = iter_data
+            
             classification_optimizer.zero_grad()
 
             if freeze_features:
@@ -168,20 +176,25 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
     
     # Calculate prediction accuracy on training and test sets
     accuracies = []
-    for i, dataloader in enumerate(train_dataloader, test_dataloader):
+    for i, dataloader in enumerate((train_dataloader, test_dataloader)):
         num_correct = 0
         num_total = 0
-        for (X, y) in dataloader:
+        for iter_data in dataloader:
+            if simclr:
+                X, _, y = iter_data # ignore augmented X
+            else:
+                X, y = iter_data
+
             with torch.no_grad():
                 features = encoder.get_features(X.to(device))
                 predicted_y_logits = classifier(features)
             
             # identify predicted classes from logits
-            _, predicted_y = torch.max(predicted_y_logits, 1) 
-            num_correct += (predicted_y == y).sum()
+            _, predicted_y = torch.max(predicted_y_logits, 1)
+            num_correct += (predicted_y.cpu() == y).sum()
             num_total += y.size(0)
             
-        accuracy = (100 * num_correct.cpu().numpy()) / num_total
+        accuracy = (100 * num_correct.numpy()) / num_total
         accuracies.append(accuracy)
 
     train_acc, test_acc = accuracies
@@ -201,8 +214,135 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
     return classifier, loss_arr, train_acc, test_acc
 
 
+def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5):
+    """
+    contrastiveLoss(proj_feat1, proj_feat2)
+
+    Returns contrastive loss, given sets of projected features, with positive 
+    pairs matched along the batch dimension.
+
+    Required args:
+    - proj_feat1 (2D torch Tensor): first set of projected features 
+        (batch_size x feat_size)
+    - proj_feat2 (2D torch Tensor): second set of projected features 
+        (batch_size x feat_size)
+      
+    Optional args:
+    - temperature (float): relaxation temperature. (default: 0.5)
+
+    Returns:
+    - loss (float): mean contrastive loss
+    """
+
+    device = proj_feat1.device
+
+    if len(proj_feat1) != len(proj_feat2):
+        raise ValueError(f"Batch dimension of proj_feat1 ({len(proj_feat1)}) "
+            f"and proj_feat2 ({len(proj_feat2)}) should be same")
+
+    batch_size = len(proj_feat1) # N
+    z1 = nn.functional.normalize(proj_feat1, dim=1)
+    z2 = nn.functional.normalize(proj_feat2, dim=1)
+
+    proj_features = torch.cat([z1, z2], dim=0) # 2N x projected feature dimension
+    similarity_mat = nn.functional.cosine_similarity(
+        proj_features.unsqueeze(1), proj_features.unsqueeze(0), dim=2
+        ) # dim: 2N x 2N
+    
+    # initialize arrays to identify sets of positive and negative examples
+    positive_sample_indicators = torch.roll(torch.eye(2 * batch_size), batch_size, 1)
+    negative_sample_indicators = torch.ones(2 * batch_size) - torch.eye(2 * batch_size)
+
+    numerator = torch.sum(
+        torch.exp(similarity_mat / temperature) * positive_sample_indicators.to(device), 
+        dim=1
+        )
+    denominator = torch.sum(
+        torch.exp(similarity_mat / temperature) * negative_sample_indicators.to(device), 
+        dim=1
+        )
+    loss = torch.mean(-torch.log(numerator / denominator))
+    
+    return loss
 
 
+def train_simclr(encoder, train_data, num_epochs=10, batch_size=1000, 
+                 use_cuda=True, verbose=True, target_latent="shape"):
+    """
+    Function to train an encoder using the SimCLR loss.
+    
+    Required args:
+    - encoder (nn.Module): Encoder network instance for extracting features. 
+        Should have method get_features().
+    - train_data (torch dataset): Dataset comprising the training data.
+    
+    Optional args:
+    - num_epochs (int): Number of epochs over which to train the classifier. 
+        (default: 10)
+    - batch_size (int): Batch size. (default: 1000)
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
+        (default: True)
+
+    Returns: 
+    - encoder (nn.Module): trained encoder
+    - loss_arr (list): training loss at each epoch
+    """
+
+    device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+
+    encoder = encoder.to(device)
+    projector = nn.Identity().to(device)
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_data, batch_size=batch_size, shuffle=True
+        )
+    
+    # retrieve dSprites info
+    dSprites = train_data.dataset.dSprites
+    
+    # Define loss and optimizers
+    train_parameters = list(encoder.parameters()) + list(projector.parameters())
+    optimizer = torch.optim.Adam(train_parameters, lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
+    loss_fn = contrastiveLoss
+
+    # Train model on training set
+    loss_arr = []
+    for epoch_n in tqdm(range(num_epochs)):
+        total_loss = 0
+        for batch_idx, (X, X_aug, Y) in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            features = encoder(X.to(device))
+            features_aug = encoder(X_aug.to(device))
+            z = projector(features)
+            z_aug = projector(features_aug)
+            loss = loss_fn(z, z_aug)
+            total_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+            if verbose and batch_idx == 1 and not ((epoch_n + 1) % 10):
+                with torch.no_grad():
+                    sorter = np.argsort(Y)
+                    sorted_targets = Y[sorter]
+                    stacked_rsm = data.calculate_torch_rsm(
+                        features[sorter], features_aug[sorter], stack=True
+                        ).cpu().numpy()
+
+                    title = f"Features: Epoch {epoch_n} (batch {batch_idx})"
+                    sorted_target_values = dSprites.get_latent_values_from_classes(
+                        sorted_targets, target_latent
+                        ).squeeze()
+                    sorted_target_values = np.repeat(sorted_target_values, 2)
+                    data.plot_dsprites_rsms(
+                        dSprites, stacked_rsm, sorted_target_values, 
+                        titles=title, target_latent=target_latent
+                        )
+        
+        loss_arr.append(total_loss/len(train_dataloader))
+        scheduler.step()
+
+    return encoder, loss_arr
 
 # class ResNet18Classifier(torchvision.models.resnet.ResNet):
 

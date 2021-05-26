@@ -631,14 +631,30 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
 
 def calculate_torch_rsm(features, features_comp=None, stack=False):
+    """
+    calculate_torch_rsm(features)
 
-    if stack:
-        if features_comp is None:
-            raise ValueError("stack can only be True if features_comp is not None.")
-        features = torch.cat((features, features_comp), dim=0)
-        features_comp = features
+    Calculates representation similarity matrix (RSM) between two feature matrices using
+    pairwise cosine similarity. Uses torch.nn.functional.cosine_similarity()
+
+    Required args:
+    - features (2D torch Tensor): feature matrix (items x features)
+
+    Optional args
+    - features_comp (2D torch Tensor): second feature matrix (items x features). If 
+        None, features is compared to itself. (default: None)
+    - stack (bool): if True, feature and features_comp are first stacked along the 
+        items dimension, and the resulting matrix is compared to itself. (default: False)
+    """
 
     if features_comp is None:
+        if stack:
+            raise ValueError("stack cannot be set to True if features_comp is None.")
+        features_comp = features
+    else:
+        if features.shape != features_comp.shape:
+            raise ValueError("features and features_comp should have the same shape.")
+        features = torch.cat((features, features_comp), dim=0)
         features_comp = features
     
     rsm = nn.functional.cosine_similarity(
@@ -650,32 +666,52 @@ def calculate_torch_rsm(features, features_comp=None, stack=False):
     return rsm
 
 
-def calculate_numpy_rsm(features, features_comp=None, stack=False):
+def calculate_numpy_rsm(features, features_comp=None, stack=False, centered=False):
+    """
+    calculate_numpy_rsm(features)
 
-    if stack:
-        if features_comp is None:
-            raise ValueError("stack can only be True if features_comp is not None.")
+    Calculates representation similarity matrix (RSM) between two feature matrices using
+    pairwise cosine similarity. If centered is True, this calculation is equivalent to 
+    pairwise Pearson correlations. Uses numpy.
+
+    Required args:
+    - features (2D np array): feature matrix (items x features)
+
+    Optional args
+    - features_comp (2D np array): second feature matrix (items x features). If 
+        None, features is compared to itself. (default: None)
+    - stack (bool): if True, feature and features_comp are first stacked along the 
+        items dimension, and the resulting matrix is compared to itself. (default: False)
+    - centered (bool): if True, the mean across features is first subtracted for each item.
+        (default: False)  
+    """
+
+    if features_comp is None:
+        if stack:
+            raise ValueError("stack cannot be set to True if features_comp is None.")
+        features_comp = features
+    else:
+        if features.shape != features_comp.shape:
+            raise ValueError("features and features_comp should have the same shape.")
         features = np.concatenate((features, features_comp), axis=0)
         features_comp = features
 
-    if features_comp is None:
-        features_comp = features
+    norm_features, norms = [], []
+    for _features in [features, features_comp]:
+        _features = _features.reshape(len(_features), -1) # flatten
+        
+        if centered:
+            _features -= np.mean(_features, axis=1, keepdims=True)
 
-    if features.shape != features_comp.shape:
-        raise ValueError("features and features_comp should have the same shape.")
+        # calculate L2 norms
+        _norms = np.linalg.norm(_features, axis=1, keepdims=True) 
 
-    dFeatures, sigmas = [], []
-    for sub_features in [features, features_comp]:
-        sub_features = sub_features.reshape(len(sub_features), -1) # flatten
-        sub_dFeatures = sub_features - np.mean(sub_features, axis=1) # center
-        sub_sigmas = np.sqrt(np.mean(sub_dFeatures ** 2, axis=1)) # calculate norm
-    
-        dFeatures.append(sub_dFeatures)
-        sigmas.append(sub_sigmas)
+        norm_features.append(_features)
+        norms.append(_norms)
 
-    sigmas = np.maximum(np.product(sigmas), 1e-8) # raise minimum from 0
+    norms = np.maximum(np.dot(norms[0], norms[1].T), 1e-8) # raise to tolerance
 
-    rsm = np.dot(dFeatures[0], dFeatures[1].T) / sigmas
+    rsm = np.dot(norm_features[0], norm_features[1].T) / norms
 
     return rsm
 
@@ -710,9 +746,11 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
         titles = [titles]
     
     for r, rsm_target_class_values in enumerate(target_class_values):
+        if len(rsm_target_class_values) != len(rsms[r]):
+            raise ValueError("Must provide as many target_class_values as RSM rows/cols.")
         sorter = np.argsort(rsm_target_class_values)
         target_class_values[r] = rsm_target_class_values[sorter]
-        rsms[r] = rsms[sorter, sorter]
+        rsms[r] = rsms[r][sorter][:, sorter]
 
     _, axes = plot_util.plot_rsms(rsms, titles)
 
@@ -739,14 +777,14 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
                 else:
                     kwargs = {"va": "center"}
 
-                axis.set_ticks(edge_ticks)
+                axis.set_ticks(edge_ticks.tolist())
                 axis.set_tick_params(width=2, length=10, which="major")
-                axis.set_ticklabels("", major=True)
+                axis.set_ticklabels("", minor=False)
 
                 axis.set_ticks(label_ticks, minor=True)
                 axis.set_tick_params(length=0, which="minor")
                 axis.set_ticklabels(
-                    target_class_values, minor=True, fontsize=14, rotation=rotation, **kwargs
+                    unique_values, minor=True, fontsize=14, rotation=rotation, **kwargs
                     )
 
         else:
