@@ -167,6 +167,12 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     loss_fn = nn.CrossEntropyLoss()
     
     # Train classifier on training set
+    classifier.train()
+    if not freeze_features:
+        encoder.train()
+    else:
+        encoder.eval()
+
     loss_arr = []
     for _ in tqdm(range(num_epochs)):
         total_loss = 0
@@ -196,6 +202,9 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         scheduler.step()
     
     # Calculate prediction accuracy on training and test sets
+    classifier.eval()
+    encoder.eval()
+
     accuracies = []
     for _, dataloader in enumerate((train_dataloader, test_dataloader)):
         num_correct = 0
@@ -333,6 +342,9 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     loss_fn = contrastiveLoss
 
     # Train model on training set
+    encoder.train()
+    projector.train()
+
     loss_arr = []
     for epoch_n in tqdm(range(num_epochs)):
         total_loss = 0
@@ -410,12 +422,14 @@ class VAE_decoder(nn.Module):
 
 
     def _test_output_dim(self):
+        self.eval()
         dummy_tensor = torch.ones(1, self.feat_size)
         with torch.no_grad():
             decoder_output_shape = self(dummy_tensor).shape[1:]
         if decoder_output_shape != self.output_dim:
             raise ValueError(f"Decoder produces output of shape {decoder_output_shape} "
                 f"instead of expected {self.output_dim}.")
+        self.train()
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -518,6 +532,9 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64,
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
 
     # Train model on training set
+    encoder.train()
+    decoder.train()
+
     loss_arr = []
     for epoch in tqdm(range(num_epochs)):
         total_loss = 0

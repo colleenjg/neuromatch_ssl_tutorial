@@ -562,13 +562,13 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
 
     def __getitem__(self, idx):
-        X = self.X[idx]
+        X = self.X[idx].astype(np.float32)
         y = self.y[idx]
 
-        if self.simclr == "spijk":
+        if self.simclr and self.spijk:
             X = self._preprocess_simclr_spijk(X)
         else:
-            if self.torchvision_transforms:
+            if self.torchvision_transforms is not None:
                 X = self.torchvision_transforms()(X)
 
             if self.resize is not None:
