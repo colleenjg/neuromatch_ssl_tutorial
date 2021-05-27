@@ -193,32 +193,32 @@ class dSpritesDataset():
         """
         Lazily load and returns all dataset images.
 
-        - self._all_images: (3D np array): images (image x height x width)
+        - self._images: (3D np array): images (image x height x width)
         """
 
-        if not hasattr(self, "_all_images"):
-            self._all_images = self.npz["imgs"][()]
-        return self._all_images
+        if not hasattr(self, "_images"):
+            self._images = self.npz["imgs"][()]
+        return self._images
 
 
     @property
-    def all_latent_classes(self):
+    def latent_classes(self):
         """
         Lazily load and returns latent classes for each dataset image.
 
-        - self._all_latent_classes (3D np array): latent class values for each image (image x latent)
+        - self._latent_classes (3D np array): latent class values for each image (image x latent)
         """
 
-        if not hasattr(self, "all_latent_classes"):
-            self._all_latent_classes = self.npz["latents_classes"][()]
+        if not hasattr(self, "_latent_classes"):
+            self._latent_classes = self.npz["latents_classes"][()]
 
-        return self._all_latent_classes
+        return self._latent_classes
 
     @property
     def num_images(self):
 
         if not hasattr(self, "_num_images"):
-            self._num_images = len(self._all_latent_classes)
+            self._num_images = len(self.latent_classes)
 
         return self._num_images
 
@@ -513,6 +513,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
         self.X = self.dSprites.images
         self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
+        self.num_classes = len(self.dSprites.latent_class_values[self.target_latent])
         
         if len(self.X) != len(self.y):
             raise ValueError("X and y must have the same length.")
