@@ -2,9 +2,9 @@ import numpy as np
 import torch
 from torch import nn
 import torchvision
-import tqdm
+from tqdm import tqdm
 
-from . import data
+from . import data, plot_util
 
 
 class EncoderCore(nn.Module):
@@ -101,7 +101,7 @@ class EncoderCore(nn.Module):
 def train_classifier(encoder, dataset, train_sampler, test_sampler, 
                      num_epochs=10, fraction_of_labels=1.0, batch_size=1000, 
                      freeze_features=True, subset_seed=None, use_cuda=True, 
-                     verbose=True):
+                     verbose=False):
     """
     train_classifier(encoder, dataset, train_sampler, test_sampler)
 
@@ -128,7 +128,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - verbose (bool): If True, classification accuracy is printed. 
-        (default: True)
+        (default: False)
 
     Returns: 
     - classifier (nn.Linear): trained classification layer
@@ -237,9 +237,9 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
             train_str = "encoder and classifier"
 
         print(f"Network performance after {num_epochs} {train_str} training "
-          f"epochs (chance: {chance:.3f}%):\n"
-          f"    Training accuracy: {train_acc:.3f}%\n"
-          f"    Testing accuracy: {test_acc:.3f}%")
+          f"epochs (chance: {chance:.2f}%):\n"
+          f"    Training accuracy: {train_acc:.2f}%\n"
+          f"    Testing accuracy: {test_acc:.2f}%")
 
     return classifier, loss_arr, train_acc, test_acc
 
@@ -297,7 +297,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5):
 
 
 def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
-                 use_cuda=True, verbose=True):
+                 use_cuda=True, verbose=False):
     """
     Function to train an encoder using the SimCLR loss.
     
@@ -315,7 +315,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     - batch_size (int): Batch size. (default: 1000)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
-        (default: True)
+        (default: False)
 
     Returns: 
     - encoder (nn.Module): trained encoder
@@ -368,7 +368,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
                         features[sorter], features_aug[sorter], stack=True
                         ).cpu().numpy()
 
-                    title = f"Features (true/aug): Epoch {epoch_n} (batch {batch_idx})"
+                    title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
                     sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
                         sorted_targets, dataset.target_latent
                         ).squeeze()
@@ -485,7 +485,7 @@ def vae_loss_function(recon_X_logits, X, mu, logvar, beta=1.0):
 
 
 def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64, 
-              beta=1.0, use_cuda=True, verbose=True):
+              beta=1.0, use_cuda=True, verbose=False):
     """
     train_vae(encoder, dataset, train_sampler)
 
@@ -504,8 +504,8 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64,
     - beta (float): parameter controlling weighting of KLD loss relative to 
         reconstruction loss. (default: 1.0)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
-    - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
-        (default: True)
+    - verbose (bool): If True, 5 first batch reconstructions are plotted at 
+        each epoch. (default: False)
 
     Returns: 
     - encoder (nn.Module): trained encoder
@@ -550,21 +550,21 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64,
             num_total += len(recon_X_logits)
             loss.backward()
             optimizer.step()
-            if verbose and epoch%10==9 and batch_idx==1:
+            if verbose and epoch % 10 == 9 and batch_idx == 1:
+                num_images = 5
                 encoder.eval()
                 decoder.eval()
-                input_imgs = X[:1].detach().cpu().numpy()
+                input_imgs = X[:num_images].detach().cpu().numpy()
                 output_imgs = decoder.reconstruct(
-                    encoder.get_features(X[:1].to(device))
+                    encoder.get_features(X[:num_images].to(device))
                     ).detach().cpu().numpy()
                 encoder.train()
                 decoder.train()
-                from matplotlib import pyplot as plt
 
-                fig, ax = plt.subplots(ncols=2)
-                fig.suptitle(f"Epoch {epoch}, loss {loss.item():.3f}", y=0.95)
-                ax[0].imshow(input_imgs[0, 0], cmap='Greys_r')
-                ax[1].imshow(output_imgs[0, 0], cmap='Greys_r')
+                title = f"Epoch {epoch}, batch {batch_idx}, loss {loss.item():.2f}"
+                plot_util.plot_dsprite_image_doubles(
+                    input_imgs, output_imgs, "Reconstr.",
+                    title=title)
 
         loss_arr.append(total_loss / num_total)
         scheduler.step()

@@ -541,7 +541,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 self.simclr_transforms = simclr_transforms
                 if self.simclr_transforms is None:
                     self.simclr_transforms = torchvision.transforms.RandomAffine(
-                        degrees=180, translate=(0.2, 0.2), scale=(0.5, 1.0)
+                        degrees=90, translate=(0.2, 0.2), # scale=(0.8, 1.2) # scale doesn't seem to help
                     )
 
         self.torchvision_transforms = torchvision_transforms
@@ -647,10 +647,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         else:
             num_images = len(indices)
 
-        Xs = []
-        if self.simclr:
-            X_augs = []
-
+        Xs, X_augs = [], []
         for idx in indices:
             if self.simclr:
                 X, X_aug, _ = self[idx]
@@ -658,47 +655,16 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
             else:
                 X, _ = self[idx]
             Xs.append(X.numpy())
-        
-        if len(indices) and len(X.shape) == 3:
-            Xs = np.mean(Xs, axis=1).tolist() # across channels
-            if self.simclr:
-                X_augs = np.mean(X_augs, axis=1).tolist()
 
-        plot_Xs = Xs
-        aug_str = ""
+        title = f"{num_images} dataset images"
         if self.simclr:
-            aug_str = " and augmentations"
-            plot_Xs = []
-            ncols = np.min([len(Xs), ncols])
-            n_sets = int(np.ceil(len(Xs) / ncols))
-            for i in range(n_sets):
-                extend_Xs = Xs[i * ncols : (i + 1) * ncols]
-                extend_X_augs = X_augs[i * ncols : (i + 1) * ncols]
-                padding = [None] * (ncols - len(extend_Xs))
+            title = f"{title} and augmentations"
+            fig, _ = plot_util.plot_dsprite_image_doubles(Xs, X_augs, "Augm.", ncols=ncols)
 
-                plot_Xs.extend(extend_Xs + padding + extend_X_augs + padding)
-
-        fig, axes = plot_util.plot_dsprites_images(plot_Xs, ncols=ncols)
-        fig.suptitle(f"{num_images} dataset images{aug_str}", y=1.04)
+        else:
+            fig, _ = plot_util.plot_dsprites_images(Xs, ncols=ncols)
         
-        if self.simclr:
-            x_left = axes[0, 0].get_position().x0
-            x_right = axes[-1, -1].get_position().x1
-            x_ext = (x_right - x_left) / 30
-            for r, row_start_ax in enumerate(axes[:, 0]):
-                ylabel = "Images" if not r % 2 else "Augm."
-                row_start_ax.set_ylabel(ylabel)
-
-                if r != 0 and not r % 2:
-                    top_ax_y = axes[r - 1, 0].get_position().y0
-                    bot_ax_y = axes[r, 0].get_position().y1
-                    y = np.mean([bot_ax_y, top_ax_y])
-
-                    line = plt.Line2D(
-                        [x_left - x_ext, x_right + x_ext], [y, y], 
-                        transform=fig.transFigure, color="black"
-                        )
-                    fig.add_artist(line)
+        fig.suptitle(title, y=1.04)
 
 
 def calculate_torch_rsm(features, features_comp=None, stack=False):

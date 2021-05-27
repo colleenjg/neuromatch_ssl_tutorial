@@ -9,7 +9,9 @@ def plot_dsprites_images(images, ncols=5, title=None):
     Plots dSprites images.
 
     Required args:
-    - images (array-like): list or array of images (allows None values to skip subplots)
+    - images (array-like): list or array of images (allows None values to skip subplots).
+        If each image has 3 dimensions, the first is assumed to be the channels, and is 
+        averaged across.
 
     Optional args:
     - ncols (int): maximum number of columns. (default: 5)
@@ -19,6 +21,11 @@ def plot_dsprites_images(images, ncols=5, title=None):
     - fig (plt.Figure): figure
     - axes (plt.Axes): axes
     """
+
+    # average channel dimension
+    for i, image in enumerate(images):
+        if image is not None and len(image.shape) == 3:
+            images[i] = np.mean(image, axis=0)
 
     num_images = len(images)
     ncols = np.min([num_images, ncols])
@@ -38,6 +45,64 @@ def plot_dsprites_images(images, ncols=5, title=None):
         else:
             ax.axis('off')
 
+    return fig, axes
+
+
+def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, title=None):
+    """
+    plot_dsprite_image_doubles(images, image_doubles, doubles_str)
+
+    Plots dSprite images is sets of 2 rows.
+
+    Required args:
+    - images (list): list of images
+    - image_doubles (list): list of image doubles (same length as images)
+    - doubles_str (str): string that specified what the doubles are.
+
+    Optional args:
+    - ncols (int): number of columns. (default: 5)
+    - title (str): plot title. If None, no title is included. (default: None)
+
+    Returns:
+    - fig (plt.Figure): figure
+    - axes (plt.Axes): axes
+    """
+
+    if len(images) != len(image_doubles):
+        raise ValueError("images and image_doubles must have the same length.")
+
+    plot_images = []
+    ncols = np.min([len(images), ncols])
+    n_sets = int(np.ceil(len(images) / ncols))
+    for i in range(n_sets):
+        extend_images = images[i * ncols : (i + 1) * ncols]
+        extend_image_doubles = image_doubles[i * ncols : (i + 1) * ncols]
+        padding = [None] * (ncols - len(extend_images))
+
+        plot_images.extend(extend_images + padding + extend_image_doubles + padding)
+
+    fig, axes = plot_dsprites_images(plot_images, ncols=ncols)
+    if title is not None:
+        fig.suptitle(title, y=1.04)
+    
+    x_left = axes[0, 0].get_position().x0
+    x_right = axes[-1, -1].get_position().x1
+    x_ext = (x_right - x_left) / 30
+    for r, row_start_ax in enumerate(axes[:, 0]):
+        ylabel = "Images" if not r % 2 else doubles_str
+        row_start_ax.set_ylabel(ylabel)
+
+        if r != 0 and not r % 2:
+            top_ax_y = axes[r - 1, 0].get_position().y0
+            bot_ax_y = axes[r, 0].get_position().y1
+            y = np.mean([bot_ax_y, top_ax_y])
+
+            line = plt.Line2D(
+                [x_left - x_ext, x_right + x_ext], [y, y], 
+                transform=fig.transFigure, color="black"
+                )
+            fig.add_artist(line)
+    
     return fig, axes
 
 
