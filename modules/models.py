@@ -35,11 +35,11 @@ class EncoderCore(nn.Module):
             nn.Conv2d(in_channels=self.input_ch, out_channels=6, kernel_size=5, stride=1),
             nn.ReLU(),
             nn.AvgPool2d(kernel_size=2),
-            nn.BatchNorm2d(6,affine=False),
+            nn.BatchNorm2d(6, affine=False),
             nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, stride=1),
             nn.ReLU(),
             nn.AvgPool2d(kernel_size=2),
-            nn.BatchNorm2d(16,affine=False)
+            nn.BatchNorm2d(16, affine=False)
         )
 
         # calculate size of the convolutional feature extractor output
@@ -48,16 +48,26 @@ class EncoderCore(nn.Module):
 
         # linear component of the feature extractor
         self.linear_projections = nn.Sequential(
-            nn.Linear( self.feat_extr_output_size, 120),
+            nn.Linear(self.feat_extr_output_size, 120),
             nn.ReLU(),
             nn.BatchNorm1d(120, affine=False),
             nn.Linear(120, 84),
             nn.ReLU(),
             nn.BatchNorm1d(84, affine=False),
+        )
+
+        self.linear_projections_output = nn.Sequential(
             nn.Linear(84, self.feat_size),
             nn.ReLU(),
-            nn.BatchNorm1d(84, affine=False)
+            nn.BatchNorm1d(self.feat_size, affine=False)
         )
+
+        if self.vae:
+            self.linear_projections_logvar = nn.Sequential(
+                nn.Linear(84,self.feat_size),
+                nn.ReLU(),
+                nn.BatchNorm1d(self.feat_size,affine=False)
+            )
 
     def _get_feat_extr_output_size(self, input_dim):
         with torch.no_grad():
@@ -65,17 +75,23 @@ class EncoderCore(nn.Module):
             output = self.feature_extractor(dummy_input).shape
         return np.product(output)
 
-    def forward(self,X):
-        feats = self.feature_extractor(X)
-        feats = torch.flatten(feats, 1)
-        feats = self.linear_projections(feats)
+
+    def forward(self, X):
+        feats_extr = self.feature_extractor(X)
+        feats_flat = torch.flatten(feats_extr, 1)
+        feats_proj = self.linear_projections(feats_flat)
+        feats = self.linear_projections_output(feats_proj)
+        if self.vae:
+            logvars = self. linear_projections_logvar(feats_proj)
+            return feats, logvars
         return feats
 
-    def get_features(self,X):
+    def get_features(self, X):
         with torch.no_grad():
-            feats = self.feature_extractor(X)
-            feats = torch.flatten(feats, 1)
-            feats = self.linear_projections(feats)
+            feats_extr = self.feature_extractor(X)
+            feats_flat = torch.flatten(feats_extr, 1)
+            feats_proj = self.linear_projections(feats_flat)
+            feats = self.linear_projections_output(feats_proj)
         return feats
         
 
@@ -121,7 +137,11 @@ def train_classifier(encoder, train_data, test_data, num_classes=3,
     encoder = encoder.to(device)
     classifier = nn.Linear(encoder.feat_size, num_classes).to(device)
 
-    simclr = True if train_data.dataset.simclr else False
+    # retrieve simclr info
+    if isinstance(train_data, torch.utils.data.Subset):
+        simclr = train_data.dataset.simclr
+    else:
+        simclr = train_data.simclr
 
     # Define datasets and dataloaders
     train_data_subset, _ = data.train_test_split_idx(
@@ -299,8 +319,11 @@ def train_simclr(encoder, train_data, num_epochs=10, batch_size=1000,
         )
     
     # retrieve dSprites info
-    dSprites = train_data.dataset.dSprites
-    
+    if isinstance(train_data, torch.utils.data.Subset):
+        dSprites = train_data.dataset.dSprites
+    else:
+        dSprites = train_data.dSprites
+
     # Define loss and optimizers
     train_parameters = list(encoder.parameters()) + list(projector.parameters())
     optimizer = torch.optim.Adam(train_parameters, lr=1e-3)
@@ -343,6 +366,11 @@ def train_simclr(encoder, train_data, num_epochs=10, batch_size=1000,
         scheduler.step()
 
     return encoder, loss_arr
+
+
+
+
+
 
 # class ResNet18Classifier(torchvision.models.resnet.ResNet):
 

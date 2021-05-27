@@ -32,7 +32,7 @@ def plot_dsprites_images(images, ncols=5, title=None):
 
     for ax_i, ax in enumerate(axes.flatten()):
         if images[ax_i] is not None and ax_i < num_images:
-            ax.imshow(images[ax_i], cmap='Greys_r',  interpolation='nearest')
+            ax.imshow(images[ax_i], cmap='Greys_r', interpolation='nearest')
             ax.set_xticks([])
             ax.set_yticks([])
         else:

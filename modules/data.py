@@ -23,7 +23,7 @@ def get_biased_indices(dataset, indices, bias="shape_posX", control=False, rands
 
     Required args:
     - dataset (torch dSprites dataset): dSprites torch dataset
-    - indices (1D array): dataset image indices
+    - indices (1D np array): dataset image indices
 
     Optional args:
     - bias (str): way to bias the dataset subset defined by the indices.
@@ -34,7 +34,8 @@ def get_biased_indices(dataset, indices, bias="shape_posX", control=False, rands
         but they are randomly selected. (default: False)
     - randst (torch Generator or int): random state to use when splitting dataset. (default: None)
 
-    Returns 
+    Returns
+    - indices (1D np array): indices retained
     """
 
     if bias == "heart_left":
@@ -76,11 +77,43 @@ def get_biased_indices(dataset, indices, bias="shape_posX", control=False, rands
     return indices
 
 
+def subsample_sampler(sampler, fraction_sample=1.0, randst=None):
+    """
+    subsample_sampler(sampler)
+
+    Required args:
+    - sampler (SubsetRandomSampler): dataset sampler
+
+    Optional args:
+    - fraction_sample (float): fraction of sampler indices to retain in new sample.
+        (default: 1.0)
+    - randst (torch Generator or int): random state to use when subsampling. 
+        (default: None)
+    
+    Returns:
+    - sub_sampler (SubsetRandomSampler): subset dataset sampler (unseeded)
+    """
+    
+    if 1 <= fraction_sample <= 0:
+        raise ValueError("fraction_sample must be between 0 and 1, inclusively.")
+
+    subset_size = int(fraction_sample * len(sampler.indices))
+
+    if isinstance(randst, int):
+        randst = torch.random.manual_seed(randst)
+
+    sampler_indices = sampler.indices[torch.randperm(len(sampler.indices), generator=randst)]
+
+    sub_sampler = torch.utils.data.SubsetRandomSampler(sampler_indices[: subset_size])
+
+    return sub_sampler
+
+
 def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=None, control=False):
     """
     train_test_split_idx(dataset)
 
-    Splits dataaset into train and test (or any other set of 2 complementary subsets).
+    Splits dataset into train and test (or any other set of 2 complementary subsets).
 
     Required args:
     - dataset (torch dSprites dataset): dSprites torch dataset
@@ -95,10 +128,12 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
         the train_bias would determine, but they are randomly selected. (default: False)
 
     Returns:
-    - train_dataset (torch dataset): training dataset
-    - test_dataset (torch dataset): test dataset
+    - train_sampler (SubsetRandomSampler): training dataset sampler (unseeded)
+    - test_indices (SubsetRandomSampler): test dataset sampler (unseeded)
     """
 
+    if not isinstance(dataset, dSpritesTorchDataset):
+        raise ValueError("Expected dataset to be of type dSpritesTorchDataset.")
 
     if 1 <= fraction_train <= 0:
         raise ValueError("fraction_train must be between 0 and 1, inclusively.")
@@ -119,40 +154,73 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
         train_indices = get_biased_indices(dataset, train_indices, bias=train_bias, control=control)
     test_indices = all_indices[train_size :]
 
-    train_dataset = torch.utils.data.Subset(dataset, train_indices)
-    test_dataset = torch.utils.data.Subset(dataset, test_indices)
+    train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
+    test_sampler = torch.utils.data.SubsetRandomSampler(test_indices)
 
-    return train_dataset, test_dataset
+    return train_sampler, test_sampler
 
 
 class dSpritesDataset():
     
-    def __init__(self, dataset_path=DEFAULT_DATASET_NPZ_PATH):
+    def __init__(self, dataset_path=DEFAULT_DATASET_NPZ_PATH, preload=True):
         """
         Initializes dSpritesDataset instance, sets basic attributes and 
         metadata attributes.
 
+        Optional args:
+        - dataset_path (str): path to dataset 
+            (default: global variable DEFAULT_DATASET_NPZ_PATH)
+        - preload (bool): if True, images and latent classes are preloaded into memory.
+            (default: True)
+
         Attributes:
         - dataset_path (str): path to the dataset
         - npz (np.lib.bpyio.NpzFile): zipped numpy data file
-        - images (3D np array): images (image x height x width)
-        - latent_classes (2D np array): latent class values for each image (image x latent)
         - num_images (int): number of images in the dataset
         """
 
         self.dataset_path = dataset_path
         self.npz = np.load(self.dataset_path, allow_pickle=True, encoding="latin1")
-
-        self.images = self.npz["imgs"][()]
-        self.latent_classes = self.npz["latents_classes"][()]
-        self.num_images = len(self.images)
-        
         self._load_metadata()
 
 
     def __repr__(self):
         return f"dSprites dataset"
 
+    
+    @property
+    def images(self):
+        """
+        Lazily load and returns all dataset images.
+
+        - self._all_images: (3D np array): images (image x height x width)
+        """
+
+        if not hasattr(self, "_all_images"):
+            self._all_images = self.npz["imgs"][()]
+        return self._all_images
+
+
+    @property
+    def all_latent_classes(self):
+        """
+        Lazily load and returns latent classes for each dataset image.
+
+        - self._all_latent_classes (3D np array): latent class values for each image (image x latent)
+        """
+
+        if not hasattr(self, "all_latent_classes"):
+            self._all_latent_classes = self.npz["latents_classes"][()]
+
+        return self._all_latent_classes
+
+    @property
+    def num_images(self):
+
+        if not hasattr(self, "_num_images"):
+            self._num_images = len(self._all_latent_classes)
+
+        return self._num_images
 
     def _load_metadata(self):
         """
@@ -436,10 +504,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         Sets attributes:
         - X (2 or 3D np array): image array (channels (optional) x height x width).
         - y (1D np array): targets
+
         ...
         """
 
         self.dSprites = dSprites
+        self.target_latent = target_latent
 
         self.X = self.dSprites.images
         self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
@@ -470,7 +540,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 self.simclr_transforms = simclr_transforms
                 if self.simclr_transforms is None:
                     self.simclr_transforms = torchvision.transforms.RandomAffine(
-                        degrees=180, translate=(0.2, 0.2), scale=(0.5,1.0)
+                        degrees=180, translate=(0.2, 0.2), scale=(0.5, 1.0)
                     )
 
         self.torchvision_transforms = torchvision_transforms
