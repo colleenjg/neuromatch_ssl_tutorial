@@ -193,7 +193,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
 
     if dataset.target_latent != "shape":
         warnings.warn(f"Training a logistic regression on {dataset.target_latent} classification. "
-            f"with {dataset.num_classes} possible target classes.\nIf there is a meaninful linear "
+            f"with {dataset.num_classes} possible target classes.\nIf there is a meaningful linear "
             "relationship between the different classes, training a linear regression to predict "
             "latent values continuously would be advisable, instead of using a logistic regression.")
 
