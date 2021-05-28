@@ -106,9 +106,9 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, titl
     return fig, axes
 
 
-def plot_rsms(rsms, titles=None):
+def plot_RSMs(rsms, titles=None):
     """
-    plot_rsms(rsms)
+    plot_RSMs(rsms)
 
     Plots representation similarity matrices.
 

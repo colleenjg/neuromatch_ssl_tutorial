@@ -753,10 +753,10 @@ def calculate_numpy_rsm(features, features_comp=None, stack=False, centered=Fals
     return rsm
 
 
-def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None, 
+def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None, 
                        target_latent="shape"):
     """
-    plot_dsprites_rsms(dataset, rsms, target_class_values)
+    plot_dsprites_RSMs(dataset, rsms, target_class_values)
 
     Plots representation similarity matrices for dSprites data.
 
@@ -789,7 +789,7 @@ def plot_dsprites_rsms(dataset, rsms, target_class_values, titles=None,
         target_class_values[r] = rsm_target_class_values[sorter]
         rsms[r] = rsms[r][sorter][:, sorter]
 
-    _, axes = plot_util.plot_rsms(rsms, titles)
+    _, axes = plot_util.plot_RSMs(rsms, titles)
 
     dataset._check_class_name(target_latent)
 

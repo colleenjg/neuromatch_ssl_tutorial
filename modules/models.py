@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 import torchvision
-from tqdm import tqdm
+from tqdm.notebook import tqdm as tqdm
 
 from . import data, plot_util
 
@@ -109,7 +109,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     
     Required args:
     - encoder (nn.Module): Encoder network instance for extracting features. 
-        Should have method get_features().
+        Should have method get_features(). If None, an Identity module is used.
     - dataset (dSpritesTorchDataset): dSprites torch dataset
     - train_sampler (SubsetRandomSampler): Training dataset sampler.
     - test_sampler (SubsetRandomSampler): Test dataset sampler.
@@ -140,9 +140,18 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    if encoder is None:
+        encoder = nn.Identity().to(device)
+        encoder.get_features = encoder.forward
+        linear_input = dataset.dSprites.images[0].size
+        if not freeze_features:
+            raise ValueError("freeze_features must be True if no encoder is provided.")
+    else:
+        linear_input = encoder.feat_size
+    
     encoder = encoder.to(device)
 
-    classifier = nn.Linear(encoder.feat_size, dataset.num_classes).to(device)
+    classifier = nn.Linear(linear_input, dataset.num_classes).to(device)
 
     # Define datasets and dataloaders
     train_subset_sampler = data.subsample_sampler(
@@ -190,7 +199,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
             else:
                 features = encoder(X.to(device))
 
-            predicted_y_logits = classifier(features)
+            predicted_y_logits = classifier(features.flatten(start_dim=1))
             loss = loss_fn(predicted_y_logits, y.to(device))
             loss.backward()
             classification_optimizer.step()
@@ -217,7 +226,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
 
             with torch.no_grad():
                 features = encoder.get_features(X.to(device))
-                predicted_y_logits = classifier(features)
+                predicted_y_logits = classifier(features.flatten(start_dim=1))
             
             # identify predicted classes from logits
             _, predicted_y = torch.max(predicted_y_logits, 1)
@@ -397,6 +406,7 @@ class VAE_decoder(nn.Module):
 
         super().__init__()
         self.feat_size = feat_size
+        self.vae = True
 
         self.decoder_linear = nn.Sequential(
               nn.Linear(self.feat_size, 84),
@@ -571,6 +581,87 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64,
 
     return encoder, decoder, loss_arr
 
+
+def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use_cuda=True):
+    """
+    plot_vae_reconstructions(encoder, decoder, dataset, indices)
+
+    Plots VAE reconstructions from an encoder and decoder.
+
+    Required args:
+    - encoder (CoreEncoder): encoder with self.vae set to True.
+    - decoder (VAE_decoder): VAE decoder
+    - dataset (dSpritesTorchDataset): dSprites torch dataset
+    - indices (array-like): dataset indices to plot
+
+    Optional args:
+    - title (str): Plot title. (default: None)
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    """
+
+    device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+
+    if not (encoder.vae and decoder.vae):
+        raise ValueError("encoder and decoder must have self.vae set to True.") 
+
+    encoder = encoder.to(device)
+    decoder = VAE_decoder(encoder.feat_size, encoder.input_dim).to(device)
+
+    # Retrieve reconstructions in eval mode
+    encoder.eval()
+    decoder.eval()
+
+    Xs = dataset[indices]
+    recon_Xs = decoder.reconstruct(encoder.get_features(Xs.to(device))).detach().cpu().numpy()
+    Xs = Xs.detach().cpu().numpy()
+
+    encoder.train()
+    decoder.train()  
+
+    plot_util.plot_dsprite_image_doubles(Xs, recon_Xs, "Reconstr.", title=title)
+
+
+
+# def plot_model_RSMs(encoders, dataset, sampler, use_cude=True):
+
+#     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+
+#     for encoder in encoders:
+#         encoder = encoder.to(device)
+
+#         dataloader = torch.utils.data.DataLoader(dataset, batch_size=1000, sampler=sampler)
+
+
+#               with torch.no_grad():
+#                     sorter = np.argsort(Y)
+#                     sorted_targets = Y[sorter]
+#                     stacked_rsm = data.calculate_torch_rsm(
+#                         features[sorter], features_aug[sorter], stack=True
+#                         ).cpu().numpy()
+
+#                     title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
+#                     sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
+#                         sorted_targets, dataset.target_latent
+#                         ).squeeze()
+#                     sorted_target_values = np.tile(sorted_target_values, 2)
+#                     data.plot_dsprites_rsms(
+#                         dataset.dSprites, stacked_rsm, sorted_target_values, 
+#                         titles=title, target_latent=dataset.target_latent
+#                         )
+        
+
+#     # Retrieve reconstructions in eval mode
+#     encoder.eval()
+#     decoder.eval()
+
+#     Xs = dataset[indices]
+#     recon_Xs = decoder.reconstruct(encoder.get_features(Xs.to(device))).detach().cpu().numpy()
+#     Xs = Xs.detach().cpu().numpy()
+
+#     encoder.train()
+#     decoder.train()  
+
+#     plot_util.plot_dsprite_image_doubles(Xs, recon_Xs, "Reconstr.", title=title)
 
 # class ResNet18Classifier(torchvision.models.resnet.ResNet):
 
