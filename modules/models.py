@@ -259,7 +259,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     return classifier, loss_arr, train_acc, test_acc
 
 
-def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5):
+def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
     """
     contrastiveLoss(proj_feat1, proj_feat2)
 
@@ -274,6 +274,8 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5):
       
     Optional args:
     - temperature (float): relaxation temperature. (default: 0.5)
+    - cut_neg_ex (bool): If True, loss is modified to cut out most negative 
+        examples. (default: False)
 
     Returns:
     - loss (float): mean contrastive loss
@@ -302,17 +304,25 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5):
         torch.exp(similarity_mat / temperature) * positive_sample_indicators.to(device), 
         dim=1
         )
+
+    if cut_neg_ex:
+        # remove 9/10 of negative examples from loss calculation
+        retain = np.max([1, int(len(negative_sample_indicators) / 10)])
+        negative_sample_indicators = negative_sample_indicators[:, :retain]
+        similarity_mat = similarity_mat[:, :retain]
+
     denominator = torch.sum(
         torch.exp(similarity_mat / temperature) * negative_sample_indicators.to(device), 
         dim=1
         )
+
     loss = torch.mean(-torch.log(numerator / denominator))
     
     return loss
 
 
 def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
-                 use_cuda=True, verbose=False):
+                 cut_neg_ex=False, use_cuda=True, verbose=False):
     """
     Function to train an encoder using the SimCLR loss.
     
@@ -328,6 +338,8 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
     - batch_size (int): Batch size. (default: 1000)
+    - cut_neg_ex (bool): If True, loss is modified to cut out most negative 
+        examples. (default: False)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
         (default: False)
@@ -353,8 +365,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     # Define loss and optimizers
     train_parameters = list(encoder.parameters()) + list(projector.parameters())
     optimizer = torch.optim.Adam(train_parameters, lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
-    loss_fn = contrastiveLoss
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500) 
 
     # Train model on training set
     encoder.train()
@@ -370,7 +381,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
             features_aug = encoder(X_aug.to(device))
             z = projector(features)
             z_aug = projector(features_aug)
-            loss = loss_fn(z, z_aug)
+            loss = contrastiveLoss(z, z_aug, cut_neg_ex=cut_neg_ex)
             total_loss += loss.item()
             num_total += len(z)
             loss.backward()
