@@ -7,6 +7,33 @@ from tqdm.notebook import tqdm as tqdm
 from . import data, plot_util
 
 
+def get_model_device(model):
+    """
+    get_model_device(model)
+
+    Returns the device that the first parameters in a model are stored on.
+
+    N.B.: Different components of a model can be stored on different devices. 
+    Thisfunction does NOT check for this case, so it should only be used when 
+    all model components are expected to be on the same device.
+
+    Required args:
+    - model (nn.Module): a torch model
+
+    Returns:
+    - first_param_device (str): device on which the first parameters of the 
+        model are stored
+    """
+    
+
+    if len(list(model.parameters())):
+        first_param_device = next(model.parameters()).device
+    else:
+        first_param_device = "cpu" # default if the model has no parameters
+
+    return first_param_device
+
+
 class EncoderCore(nn.Module):
     def __init__(self, feat_size=84, input_dim=(1, 64, 64), vae=False):
         """
@@ -75,10 +102,12 @@ class EncoderCore(nn.Module):
 
     def _get_feat_extr_output_size(self, input_dim):
         dummy_tensor = torch.ones(1, *input_dim)
+        reset_training = self.training
         self.eval()
         with torch.no_grad():   
             output = self.feature_extractor(dummy_tensor).shape
-        self.train()
+        if reset_training:
+            self.train()
         return np.product(output)
 
 
@@ -146,7 +175,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
     if encoder is None:
-        encoder = nn.Identity().to(device)
+        encoder = nn.Identity()
         encoder.get_features = encoder.forward
         encoder.untrained = True
         linear_input = dataset.dSprites.images[0].size
@@ -155,7 +184,8 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     else:
         linear_input = encoder.feat_size
     
-    encoder = encoder.to(device)
+    reset_encoder_device = get_model_device(encoder) # for later
+    encoder.to(device)
 
     classifier = nn.Linear(linear_input, dataset.num_classes).to(device)
 
@@ -183,10 +213,11 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     
     # Train classifier on training set
     classifier.train()
+    reset_encoder_training = encoder.training
     if not freeze_features:
         encoder.train()
-    elif not encoder.untrained:
-        encoder.eval() # otherwise untrained batch norm messes things up
+    elif not encoder.untrained: # otherwise untrained batch norm messes things up
+        encoder.eval() 
 
     loss_arr = []
     for _ in tqdm(range(num_epochs)):
@@ -243,6 +274,13 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         accuracies.append(accuracy)
 
     train_acc, test_acc = accuracies
+
+    # set final classifier state and reset original encoder state
+    classifier.train()
+    classifier.cpu()
+    if reset_encoder_training:
+        encoder.train()
+    encoder.to(reset_encoder_device)
 
     if verbose:
         chance = 100 / dataset.num_classes
@@ -353,6 +391,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    reset_encoder_device = get_model_device(encoder) # record for later
     encoder = encoder.to(device)
     projector = nn.Identity().to(device)
 
@@ -370,6 +409,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500) 
 
     # Train model on training set
+    reset_encoder_training = encoder.training # record for later
     encoder.train()
     projector.train()
 
@@ -408,6 +448,13 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
         
         loss_arr.append(total_loss / num_total)
         scheduler.step()
+
+    projector.cpu()
+    if reset_encoder_training:
+        encoder.train()
+    else:
+        encoder.eval() 
+    encoder.to(reset_encoder_device)
 
     return encoder, loss_arr
 
@@ -453,13 +500,15 @@ class VAE_decoder(nn.Module):
 
     def _test_output_dim(self):
         dummy_tensor = torch.ones(1, self.feat_size)
+        reset_training = self.training
         self.eval()
         with torch.no_grad():
             decoder_output_shape = self.reconstruct(dummy_tensor).shape[1:]
         if decoder_output_shape != self.output_dim:
             raise ValueError(f"Decoder produces output of shape {decoder_output_shape} "
                 f"instead of expected {self.output_dim}.")
-        self.train()
+        if reset_training:
+            self.train()
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -545,6 +594,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    reset_encoder_device = get_model_device(encoder) # for later
     encoder = encoder.to(device)
     decoder = VAE_decoder(encoder.feat_size, encoder.input_dim).to(device)
 
@@ -562,6 +612,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
 
     # Train model on training set
+    reset_encoder_training = encoder.training
     encoder.train()
     decoder.train()
 
@@ -600,6 +651,15 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
         loss_arr.append(total_loss / num_total)
         scheduler.step()
 
+    # set final decoder state and reset original encoder state
+    decoder.train()
+    decoder.cpu()
+    if reset_encoder_training:
+        encoder.train()
+    else:
+        encoder.eval()
+    encoder.to(reset_encoder_device)
+
     return encoder, decoder, loss_arr
 
 
@@ -625,8 +685,16 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
     if not (encoder.vae and decoder.vae):
         raise ValueError("encoder and decoder must have self.vae set to True.") 
 
+    reset_encoder_device = get_model_device(encoder) # record for later
+    reset_decoder_device = get_model_device(decoder)
+
+    # Send to device
     encoder = encoder.to(device)
     decoder = decoder.to(device)
+
+
+    reset_encoder_training = encoder.train() # record for later
+    reset_decoder_training = decoder.train()
 
     # Retrieve reconstructions in eval mode
     encoder.eval()
@@ -637,15 +705,21 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
         recon_Xs = decoder.reconstruct(encoder.get_features(Xs)).detach().cpu().numpy()
         Xs = Xs.cpu().numpy()
 
-    encoder.train()
-    decoder.train()  
-
+    # reset original encoder and decoder states
+    if reset_encoder_training:
+        encoder.train()
+    encoder.to(reset_encoder_device)
+    
+    if reset_decoder_training:
+        decoder.train()  
+    decoder.to(reset_decoder_device)
+    
     plot_util.plot_dsprite_image_doubles(list(Xs), list(recon_Xs), "Reconstr.", title=title)
 
 
 
 def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="shape", 
-                    untrained=False, use_cuda=True):
+                    use_cuda=True):
     """
     plot_model_RSMs(encoders, dataset, sampler)
 
@@ -679,6 +753,8 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
     encoder_rsms = []
     encoder_latents = []
     for encoder in encoders:
+        reset_encoder_training = encoder.training
+        reset_encoder_device = get_model_device(encoder)
         if not encoder.untrained:
             encoder.eval() # otherwise untrained batch norm messes things up
         encoder = encoder.to(device)
@@ -703,6 +779,13 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
 
         encoder_rsms.append(rsm)
         encoder_latents.append(all_latents)
+
+        # reset original encoder state
+        if reset_encoder_training:
+            encoder.train()
+        else:
+            encoder.eval()
+        encoder.to(reset_encoder_device)
 
     data.plot_dsprites_RSMs(
         dataset.dSprites, encoder_rsms, encoder_latents, 

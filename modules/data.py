@@ -814,6 +814,7 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
             unique_values = [f"{value:.1f}" for value in unique_values]
         
         # place major ticks at class boundaries and class labels between
+        sorting_latent_str = sorting_latent
         if sorting_latent in ["shape", "scale"]:
             edge_ticks = np.append(target_change_idxs, len(sub_target_class_values))
             label_ticks = target_change_idxs + np.diff(edge_ticks) / 2
@@ -836,6 +837,7 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
 
         else:
             if sorting_latent == "orientation":
+                sorting_latent_str = f"{sorting_latent} (in radians)"
                 nticks = 9
             elif sorting_latent in ["posX", "posY"]:
                 nticks = 11
@@ -852,5 +854,5 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
                 axis.set_ticks(ticks)
                 axis.set_ticklabels(ticklabels)
 
-        subax.set_xlabel(sorting_latent, labelpad=10)
+        subax.set_xlabel(sorting_latent_str, labelpad=10)
 
