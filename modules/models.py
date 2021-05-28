@@ -274,8 +274,8 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
       
     Optional args:
     - temperature (float): relaxation temperature. (default: 0.5)
-    - cut_neg_ex (bool): If True, loss is modified to cut out most negative 
-        examples. (default: False)
+    - cut_neg_ex (bool): If True, loss is modified to use only 1/10th of the 
+        negative samples available in the batch (randomly sampled). (default: False)
 
     Returns:
     - loss (float): mean contrastive loss
@@ -306,10 +306,12 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
         )
 
     if cut_neg_ex:
-        # remove 9/10 of negative examples from loss calculation
-        retain = np.max([1, int(len(negative_sample_indicators) / 10)])
-        negative_sample_indicators = negative_sample_indicators[:, :retain]
-        similarity_mat = similarity_mat[:, :retain]
+        # for each sample, use only a random 1/10 of negative example pairings
+        num_retain = np.max([1, int(len(negative_sample_indicators) / 10)])
+
+        # randomly identify the values to retain for each column
+        retain_bool = (torch.argsort(torch.rand_like(negative_sample_indicators), axis=1) < num_retain)
+        negative_sample_indicators *= retain_bool
 
     denominator = torch.sum(
         torch.exp(similarity_mat / temperature) * negative_sample_indicators.to(device), 
@@ -394,7 +396,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
                     stack=True
                     ).cpu().numpy()
 
-                title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
+                title = f"Features (true / augm.): Epoch {epoch_n} (batch {batch_idx})"
                 sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
                     sorted_targets, dataset.target_latent
                     ).squeeze()
@@ -512,7 +514,7 @@ def vae_loss_function(recon_X_logits, X, mu, logvar, beta=1.0):
     return BCE + beta * KLD
 
 
-def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
+def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500, 
               beta=1.0, use_cuda=True, verbose=False):
     """
     train_vae(encoder, dataset, train_sampler)
@@ -528,7 +530,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000,
     Optional args:
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
-    - batch_size (int): Batch size. (default: 1000)
+    - batch_size (int): Batch size. (default: 500)
     - beta (float): parameter controlling weighting of KLD loss relative to 
         reconstruction loss. (default: 1.0)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
@@ -556,7 +558,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000,
 
     # Define loss and optimizers
     train_params = list(encoder.parameters()) + list(decoder.parameters())
-    optimizer = torch.optim.Adam(train_params, lr=5e-3)
+    optimizer = torch.optim.Adam(train_params, lr=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
 
     # Train model on training set
