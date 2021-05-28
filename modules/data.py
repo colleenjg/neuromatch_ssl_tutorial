@@ -516,12 +516,13 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         self.num_classes = len(self.dSprites.latent_class_values[self.target_latent])
         
         if len(self.X) != len(self.y):
-            raise ValueError("X and y must have the same length.")
+            raise ValueError("images and latent classes must have the same length.")
         
-        if len(self.X.shape) not in [2, 3]:
-            raise ValueError("X should have 2 or 3 dimensions.")
+        if len(self.X.shape) not in [3, 4]:
+            raise ValueError("images should have 3 or 4 dimensions.")
 
         self.simclr = simclr
+        self.spijk = None
         if self.simclr:
             self.spijk = spijk
             if self.spijk is not None:
@@ -551,8 +552,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
             self.resize_transform = torchvision.transforms.Resize(size=self.resize)
 
         self.rgb_expand = rgb_expand
-        if self.rgb_expand and len(X.shape) != 2:
+        if self.rgb_expand and len(self.X[0].shape) != 2:
             raise ValueError("If rgb_expand is True, X should have 2 dimensions.")
+
+        self.ch_expand = False
+        if len(self.X[0].shape) == 2 and not (self.rgb_expand or self.spijk):
+            self._ch_expand = True
 
         self.num_samples = len(self.X)
 
@@ -575,9 +580,11 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 X = self.resize_transform(X)
 
             if self.rgb_expand:
-                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=0) 
+                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=0)
 
-        X = torchvision.transforms.ToTensor()(X)
+            if self._ch_expand:
+                X = np.expand_dims(X, axis=-3)
+
         y = torch.tensor(y)
 
         if self.simclr:

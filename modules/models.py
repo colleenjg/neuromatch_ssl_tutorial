@@ -665,10 +665,10 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
             indices = sampler.indices[b_idx * batch_size : (b_idx + 1) * batch_size]
             if dataset.simclr:
                 Xs, _, _ = dataset[indices]
-            else:   
+            else:
                 Xs, _ = dataset[indices]
             with torch.no_grad():
-                features = encoder.get_features(Xs).cpu()
+                features = encoder.get_features(torch.Tensor(Xs).to(device)).cpu()
             all_features.append(features)
             all_latents.append(dataset.dSprites.get_latent_values(
                 indices, latent_class_names=[sorting_latent]
