@@ -320,7 +320,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
       
     Optional args:
     - temperature (float): relaxation temperature. (default: 0.5)
-    - cut_neg_ex (bool): If True, loss is modified to use only 1/10th of the 
+    - cut_neg_ex (bool): If True, loss is modified to use only 1/100th of the 
         negative samples available in the batch (randomly sampled). (default: False)
 
     Returns:
@@ -353,7 +353,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
 
     if cut_neg_ex:
         # for each sample, use only a random 1/10 of negative example pairings
-        num_retain = np.max([1, int(len(negative_sample_indicators) / 10)])
+        num_retain = np.max([1, int(len(negative_sample_indicators) / 100)])
 
         # randomly identify the values to retain for each column
         retain_bool = (torch.argsort(torch.rand_like(negative_sample_indicators), axis=1) < num_retain)
