@@ -109,7 +109,8 @@ def subsample_sampler(sampler, fraction_sample=1.0, randst=None):
     return sub_sampler
 
 
-def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=None, control=False):
+def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=None, 
+                         control=False):
     """
     train_test_split_idx(dataset)
 
@@ -133,7 +134,8 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
     """
 
     if not isinstance(dataset, dSpritesTorchDataset):
-        raise ValueError("Expected dataset to be of type dSpritesTorchDataset.")
+        raise ValueError("Expected dataset to be of type dSpritesTorchDataset, but "
+            f"found {type(dataset)}.")
 
     if 1 <= fraction_train <= 0:
         raise ValueError("fraction_train must be between 0 and 1, inclusively.")
@@ -149,9 +151,13 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
     if train_bias is not None:
         if hasattr(dataset, "indices"):
             # implementing this just requires an extra indexing step
-            raise NotImplementedError("Training bias is implemented for full torch datasets only, "
-                "not subsets.")
-        train_indices = get_biased_indices(dataset, train_indices, bias=train_bias, control=control)
+            raise NotImplementedError(
+                "Training bias is implemented for full torch datasets only, "
+                "not subsets."
+                )
+        train_indices = get_biased_indices(
+            dataset, train_indices, bias=train_bias, control=control
+            )
     test_indices = all_indices[train_size :]
 
     train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)

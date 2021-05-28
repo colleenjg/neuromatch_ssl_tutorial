@@ -1,3 +1,4 @@
+import copy
 import warnings
 
 import numpy as np
@@ -5,8 +6,11 @@ import torch
 from torch import nn
 import torchvision
 from tqdm.notebook import tqdm as tqdm
+from matplotlib import pyplot as plt
 
 from . import data, plot_util
+
+DEFAULT_LABELLED_FRACTIONS = [0.05, 0.1, 0.2, 0.4, 0.75, 1.0]
 
 
 def get_model_device(model):
@@ -153,7 +157,6 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     Optional args:
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
-    - num_classes (int): Number of data classes for classification. (default: 3)
     - fraction_of_labels (float): Fraction of the total number of available 
         labelled training data to use for training. (default: 1.0)
     - batch_size (int): Batch size. (default: 1000)
@@ -172,7 +175,6 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     - train_acc (float): final training accuracy
     - test_acc (float): final test accuracy
     """
-
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
@@ -305,7 +307,8 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     return classifier, loss_arr, train_acc, test_acc
 
 
-def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
+
+def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
     """
     contrastiveLoss(proj_feat1, proj_feat2)
 
@@ -320,8 +323,12 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
       
     Optional args:
     - temperature (float): relaxation temperature. (default: 0.5)
-    - cut_neg_ex (bool): If True, loss is modified to use only 1/100th of the 
-        negative samples available in the batch (randomly sampled). (default: False)
+    - neg_pairs (str or num): If "all", all available negative pairs are used for the loss 
+        calculation. Otherwise, only a certain number or proportion of 
+        the negative pairs available in the batch, as specified by the parameter, 
+        are randomly sampled and included in the calculation, 
+        e.g. 5 for 5 examples or 0.05 for 5% of negative pairs. 
+        (default: "all")
 
     Returns:
     - loss (float): mean contrastive loss
@@ -346,23 +353,45 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
     positive_sample_indicators = torch.roll(torch.eye(2 * batch_size), batch_size, 1)
     negative_sample_indicators = torch.ones(2 * batch_size) - torch.eye(2 * batch_size)
 
+    if neg_pairs != "all": 
+        # here, positive pairs are NOT included in the negative pairs
+        min_val = 1
+        max_val = torch.sum(negative_sample_indicators[0]).item() - 1 # excluding positive pair
+        if neg_pairs < 1:
+            num_retain = int(neg_pairs * len(negative_sample_indicators))
+        else:
+            num_retain = int(neg_pairs)
+        
+        if num_retain < min_val:
+            warnings.warn("Increasing the number of negative pairs to use per "
+                f"image in the contrastive loss from {num_retain} to the minimum "
+                f"value of {min_val}.")
+            num_retain = min_val
+        elif num_retain > max_val: # retain all
+            num_retain = max_val
+
+        # randomly identify the values to retain for each column
+        exclusion_indicators = torch.absolute(1 - negative_sample_indicators) + positive_sample_indicators
+        random_values = torch.rand_like(negative_sample_indicators) + exclusion_indicators * 3
+        retain_bool = (torch.argsort(torch.argsort(random_values, axis=1), axis=1) < num_retain)
+
+        negative_sample_indicators *= retain_bool
+        if not (torch.sum(negative_sample_indicators, dim=1) == num_retain).all():
+            raise NotImplementedError(f"Implementation error. Not all images shave {num_retain} "
+                "negative pair(s).")
+
     numerator = torch.sum(
         torch.exp(similarity_mat / temperature) * positive_sample_indicators.to(device), 
         dim=1
         )
 
-    if cut_neg_ex:
-        # for each sample, use only a random 1/10 of negative example pairings
-        num_retain = np.max([1, int(len(negative_sample_indicators) / 100)])
-
-        # randomly identify the values to retain for each column
-        retain_bool = (torch.argsort(torch.rand_like(negative_sample_indicators), axis=1) < num_retain)
-        negative_sample_indicators *= retain_bool
-
     denominator = torch.sum(
         torch.exp(similarity_mat / temperature) * negative_sample_indicators.to(device), 
         dim=1
         )
+    
+    if neg_pairs and (denominator < 1e-8).any(): # clamp, just in case
+        denominator = torch.clamp(denominator, 1e-8)
 
     loss = torch.mean(-torch.log(numerator / denominator))
     
@@ -370,7 +399,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, cut_neg_ex=False):
 
 
 def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
-                 cut_neg_ex=False, use_cuda=True, verbose=False):
+                 neg_pairs="all", use_cuda=True, verbose=False):
     """
     Function to train an encoder using the SimCLR loss.
     
@@ -386,8 +415,11 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
     - batch_size (int): Batch size. (default: 1000)
-    - cut_neg_ex (bool): If True, loss is modified to cut out most negative 
-        examples. (default: False)
+    - neg_pairs (str or num): If "all", all available negative pairs are used for 
+        the loss calculation. Otherwise, the number or proportion specified 
+        by the parameter is randomly sampled and used, e.g. 5 for 5 examples or 
+        0.05 for 5% of negative pairs. 
+        (default: "all")
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
         (default: False)
@@ -431,7 +463,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
             features_aug = encoder(X_aug.to(device))
             z = projector(features)
             z_aug = projector(features_aug)
-            loss = contrastiveLoss(z, z_aug, cut_neg_ex=cut_neg_ex)
+            loss = contrastiveLoss(z, z_aug, neg_pairs=neg_pairs)
             total_loss += loss.item()
             num_total += len(z)
             loss.backward()
@@ -800,6 +832,235 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
         titles=titles, sorting_latent=sorting_latent
         )
         
+
+
+def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sampler, 
+                                    labelled_fractions=None, num_epochs=10, 
+                                    freeze_features=True, subset_seed=None, 
+                                    use_cuda=True, encoder_label=None, 
+                                    plot_accuracies=True, ax=None, title=None, 
+                                    plot_chance=True, color="blue", marker=".", 
+                                    verbose=False):
+    """
+    train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sampler)
+
+    Trains classifiers on an encoder, and returns training and test accuracy with
+    different fractions of labelled data. Optionally plots the results.
+
+    Required args:
+     - encoder (nn.Module): Encoder network instance for extracting features. 
+        Should have method get_features().
+    - dataset (dSpritesTorchDataset): dSprites torch dataset
+    - train_sampler (SubsetRandomSampler): Training dataset sampler.
+    - test_sampler (SubsetRandomSampler): Test dataset sampler.
+    
+    Optional args:
+    - labelled_fractions (list): List of fractions of the total number of available 
+        labelled training data to use for training. If None, the 
+        DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
+    - num_epochs (int): Number of epochs over which to train the classifier. 
+        (default: 10)
+    - freeze_features (bool): If True, the feature encoder is frozen and only 
+        the classifier is trained. If False, the encoder is also trained. 
+        (default: True)
+    - subset_seed (int): seed for selecting data subset, if applicable 
+        (default: None)
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - encoder_label (str): Label for the encoder. (default: None)
+    - plot_accuracies (bool): If True, the accuracies are plotted. (default: True)
+    - ax (plt Axis): pyplot axis on which to plot accuracies. If None, a new axis is 
+        initalized. (default: None)
+    - title (str): main plot title. (default: None)
+    - plot_chance (bool): if True, chance level classifier accuracy is plotted. 
+        (default: False)
+    - color (str): color to use when plotting the accuracies. (default: "blue")
+    - marker (str): marker to use when plotting the accuracies. (default: ".")
+    - verbose (bool): If True, classification accuracy is printed. 
+        (default: False)
+
+    Returns: 
+    - train_acc (1D np array): final training accuracy for each fraction labelled
+    - test_acc (1D np array): final test accuracy for each fraction labelled
+    """
+
+    device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+
+    reset_encoder_device = get_model_device(encoder)
+    encoder.to(device)
+
+    if isinstance(labelled_fractions, (int, float)):
+        labelled_fractions = [labelled_fractions]
+
+    if labelled_fractions is None:
+        labelled_fractions = DEFAULT_LABELLED_FRACTIONS
+        labelled_fraction_str = ", ".join([str(val) for val in labelled_fractions])
+        if verbose:
+            print("Using the following default labelled fraction values: "
+                f"{labelled_fraction_str}")
+
+    if np.min(labelled_fractions) <= 0 or np.max(labelled_fractions) > 1:
+        raise ValueError("labelled_fractions must be between (0, 1) (excl, incl).")
+
+    train_acc = np.zeros(len(labelled_fractions))
+    test_acc = np.zeros_like(train_acc)
+
+    freeze_str = "" if freeze_features else "*"
+
+    if verbose and encoder_label is not None:
+        add_str = "" if freeze_features else " and encoder"
+        print(f"{encoder_label[0].capitalize()}{encoder_label[1:]} "
+            f"encoder - training classifier{add_str}{freeze_str}:")
+
+    if not freeze_features: # retain original
+        orig_encoder = copy.deepcopy(encoder)
+
+    for i, labelled_fraction in enumerate(labelled_fractions):
+        if not freeze_features: # obtain new fresh version
+            encoder = copy.deepcopy(orig_encoder)
+        if verbose:
+            print(f"    using {int(labelled_fraction * 100):.2f}% of available labelled data...")
+        _,  _, train_acc[i], test_acc[i] = train_classifier(
+            encoder, dataset, train_sampler, test_sampler, num_epochs=num_epochs, 
+            fraction_of_labels=labelled_fraction, freeze_features=freeze_features, 
+            subset_seed=subset_seed, verbose=False
+            )
+
+    if plot_accuracies:
+        if ax is None:
+            _, ax = plt.subplots(1)
+        if plot_chance:
+            ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", alpha=0.7)
+    
+        if encoder_label is None:
+            encoder_label = ""
+        else:
+            encoder_label = f"{encoder_label}{freeze_str} - "
+
+        ax.plot(labelled_fractions, train_acc, ls="dashed", label=f"{encoder_label}training", 
+            color=color, marker=marker, markersize=10, alpha=0.6)
+        ax.plot(labelled_fractions, test_acc, lw=3, label=f"{encoder_label}test", 
+            color=color, marker=marker, markersize=10, alpha=0.8)
+
+        ax.set_xlabel("Fraction of labelled data used")
+        ax.set_ylabel("Classification accuracy (%)")
+        ax.legend()
+
+        from matplotlib.ticker import ScalarFormatter
+        ax.set_xscale("log")
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+
+        if title is not None:
+            ax.set_title(title)
+
+    encoder.to(reset_encoder_device)
+
+    return train_acc, test_acc
+
+
+def train_encoder_clfs_by_fraction_labelled(encoders, dataset, train_sampler, test_sampler, 
+                                            labelled_fractions=None, num_epochs=10, 
+                                            freeze_features=True, subset_seed=None, 
+                                            use_cuda=True, encoder_labels=None, 
+                                            plot_accuracies=True, title=None, verbose=False):
+
+    """
+    train_encoder_clfs_by_fraction_labelled(encoder, train_sampler, test_sampler)
+
+    Trains classifiers on encoders, and returns training and test accuracy with
+    different fractions of labelled data. Optionally plots the results.
+
+    Required args:
+     - encoders (list): List of encoder network instances for extracting features. 
+        Should have method get_features().
+    - dataset (dSpritesTorchDataset): dSprites torch dataset.
+    - train_sampler (SubsetRandomSampler): Training dataset sampler.
+    - test_sampler (SubsetRandomSampler): Test dataset sampler.
+    
+    Optional args:
+    - labelled_fractions (list): List of fractions of the total number of available 
+        labelled training data to use for training. If None, the 
+        DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
+    - num_epochs (int): Number of epochs over which to train the classifier. 
+        (default: 10)
+    - freeze_features (bool or list): If True, the feature encoder is frozen and only 
+        the classifier is trained. If False, the encoder is also trained. A list can 
+        be provided if the value is different from encoder to encoder. 
+        (default: True)
+    - subset_seed (int): seed for selecting data subset, if applicable 
+        (default: None)
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - encoder_label (str): Label for the encoder. (default: None)
+    - plot_accuracies (bool): If True, the accuracies are plotted. (default: True)
+    - title (str): main plot title. (default: None)
+    - verbose (bool): If True, classification accuracy is printed. 
+        (default: False)
+
+    Returns: 
+    - train_accs (2D np array): final training accuracies for each encoder x fraction labelled
+    - test_accs (2D np array): final test accuracies for each encoder x fraction labelled
+    if plot_accuracies:
+    - ax (plt Axis): pyplot axis on which the accuracies are plotted
+    """
+
+    colors = ["blue", "brown", "green", "red", "purple", "black", "orange"] # 7
+    markers = ["o", "^", "P", "d", "X", "p", "*"]
+    if len(colors) != len(markers):
+        raise NotImplementedError(
+            "Implementation error: there should be as many preset colors as markers."
+            )
+    if len(colors) < len(encoders):
+        raise NotImplementedError(
+            f"Too may encoders for the number of preset colors {len(colors)}."
+            )
+
+    if isinstance(labelled_fractions, (int, float)):
+        labelled_fractions = [labelled_fractions]
+
+    if labelled_fractions is None:
+        labelled_fractions = DEFAULT_LABELLED_FRACTIONS
+        labelled_fraction_str = ", ".join([str(val) for val in labelled_fractions])
+        print("Using the following default labelled fraction values: "
+          f"{labelled_fraction_str}")
+
+
+    if isinstance(freeze_features, list):
+        if len(freeze_features) != len(encoders):
+            raise ValueError("If providing freeze_features as a list, must provide as "
+                "many as the number of encoders.")
+    else:
+        freeze_features = [freeze_features] * len(encoders)
+
+
+    if isinstance(encoder_labels, list):
+        if len(encoder_labels) != len(encoders):
+            raise ValueError("If providing encoder_labels, must provide as many as the "
+                "number of encoders.")
+    else:
+        encoder_labels = [None] * len(encoders)
+
+    ax = None
+    if plot_accuracies:
+        _, ax = plt.subplots(1)
+        ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", alpha=0.7, lw=3)
+        if title is not None:
+            ax.set_title(title)
+        
+
+    train_accs = np.full((len(encoders), len(labelled_fractions)), np.nan)
+    test_accs = np.full((len(encoders), len(labelled_fractions)), np.nan)
+    for e, encoder in enumerate(encoders):
+        train_accs[e], test_accs[e] = train_clfs_by_fraction_labelled(
+            encoder, dataset, train_sampler, test_sampler, 
+            labelled_fractions=labelled_fractions, num_epochs=num_epochs, 
+            freeze_features=freeze_features[e], subset_seed=subset_seed, use_cuda=use_cuda, 
+            encoder_label=encoder_labels[e], plot_accuracies=plot_accuracies, ax=ax, 
+            plot_chance=False, color=colors[e], marker=markers[e], verbose=verbose
+            )
+    
+    if plot_accuracies:
+        return train_accs, test_accs, ax
+    else:
+        return train_accs, test_accs
 
 
 # class ResNet18Classifier(torchvision.models.resnet.ResNet):
