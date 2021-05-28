@@ -23,6 +23,7 @@ class EncoderCore(nn.Module):
         super().__init__()
 
         self.vae = vae
+        self.untrained = True
 
         # check input dimensions provided
         self.input_dim = tuple(input_dim)
@@ -46,7 +47,7 @@ class EncoderCore(nn.Module):
         )
 
         # calculate size of the convolutional feature extractor output
-        self.feat_extr_output_size = self._get_feat_extr_output_size(self.input_dim)
+        self.feat_extr_output_size = 2704 #self._get_feat_extr_output_size(self.input_dim)
         self.feat_size = feat_size
 
         # linear component of the feature extractor
@@ -73,13 +74,17 @@ class EncoderCore(nn.Module):
             )
 
     def _get_feat_extr_output_size(self, input_dim):
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, *input_dim)
-            output = self.feature_extractor(dummy_input).shape
+        dummy_tensor = torch.ones(1, *input_dim)
+        self.eval()
+        with torch.no_grad():   
+            output = self.feature_extractor(dummy_tensor).shape
+        self.train()
         return np.product(output)
 
 
     def forward(self, X):
+        if self.untrained and self.training:
+            self.untrained = False
         feats_extr = self.feature_extractor(X)
         feats_flat = torch.flatten(feats_extr, 1)
         feats_proj = self.linear_projections(feats_flat)
@@ -143,6 +148,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     if encoder is None:
         encoder = nn.Identity().to(device)
         encoder.get_features = encoder.forward
+        encoder.untrained = True
         linear_input = dataset.dSprites.images[0].size
         if not freeze_features:
             raise ValueError("freeze_features must be True if no encoder is provided.")
@@ -179,8 +185,8 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     classifier.train()
     if not freeze_features:
         encoder.train()
-    else:
-        encoder.eval()
+    elif not encoder.untrained:
+        encoder.eval() # otherwise untrained batch norm messes things up
 
     loss_arr = []
     for _ in tqdm(range(num_epochs)):
@@ -370,22 +376,22 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
             loss.backward()
             optimizer.step()
             if verbose and batch_idx == 1 and not ((epoch_n + 1) % 10):
-                with torch.no_grad():
-                    sorter = np.argsort(Y)
-                    sorted_targets = Y[sorter]
-                    stacked_rsm = data.calculate_torch_RSM(
-                        features[sorter], features_aug[sorter], stack=True
-                        ).cpu().numpy()
+                sorter = np.argsort(Y)
+                sorted_targets = Y[sorter]
+                stacked_rsm = data.calculate_torch_RSM(
+                    features.detach()[sorter], features_aug.detach()[sorter], 
+                    stack=True
+                    ).cpu().numpy()
 
-                    title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
-                    sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
-                        sorted_targets, dataset.target_latent
-                        ).squeeze()
-                    sorted_target_values = np.tile(sorted_target_values, 2)
-                    data.plot_dsprites_RSMs(
-                        dataset.dSprites, stacked_rsm, sorted_target_values, 
-                        titles=title, sorting_latent=dataset.target_latent
-                        )
+                title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
+                sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
+                    sorted_targets, dataset.target_latent
+                    ).squeeze()
+                sorted_target_values = np.tile(sorted_target_values, 2)
+                data.plot_dsprites_RSMs(
+                    dataset.dSprites, stacked_rsm, sorted_target_values, 
+                    titles=title, sorting_latent=dataset.target_latent
+                    )
         
         loss_arr.append(total_loss / num_total)
         scheduler.step()
@@ -407,6 +413,7 @@ class VAE_decoder(nn.Module):
         super().__init__()
         self.feat_size = feat_size
         self.vae = True
+        self.output_dim = output_dim
 
         self.decoder_linear = nn.Sequential(
               nn.Linear(self.feat_size, 84),
@@ -432,10 +439,10 @@ class VAE_decoder(nn.Module):
 
 
     def _test_output_dim(self):
-        self.eval()
         dummy_tensor = torch.ones(1, self.feat_size)
+        self.eval()
         with torch.no_grad():
-            decoder_output_shape = self(dummy_tensor).shape[1:]
+            decoder_output_shape = self.reconstruct(dummy_tensor).shape[1:]
         if decoder_output_shape != self.output_dim:
             raise ValueError(f"Decoder produces output of shape {decoder_output_shape} "
                 f"instead of expected {self.output_dim}.")
@@ -494,7 +501,7 @@ def vae_loss_function(recon_X_logits, X, mu, logvar, beta=1.0):
     return BCE + beta * KLD
 
 
-def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64, 
+def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
               beta=1.0, use_cuda=True, verbose=False):
     """
     train_vae(encoder, dataset, train_sampler)
@@ -564,16 +571,17 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=64,
                 num_images = 5
                 encoder.eval()
                 decoder.eval()
-                input_imgs = X[:num_images].detach().cpu().numpy()
-                output_imgs = decoder.reconstruct(
-                    encoder.get_features(X[:num_images].to(device))
-                    ).detach().cpu().numpy()
+                with torch.no_grad():
+                    input_imgs = X[:num_images].detach().cpu().numpy()
+                    output_imgs = decoder.reconstruct(
+                        encoder.get_features(X[:num_images].to(device))
+                        ).detach().cpu().numpy()
                 encoder.train()
                 decoder.train()
 
                 title = f"Epoch {epoch}, batch {batch_idx}, loss {loss.item():.2f}"
                 plot_util.plot_dsprite_image_doubles(
-                    input_imgs, output_imgs, "Reconstr.",
+                    list(input_imgs), list(output_imgs), "Reconstr.",
                     title=title)
 
         loss_arr.append(total_loss / num_total)
@@ -605,25 +613,26 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
         raise ValueError("encoder and decoder must have self.vae set to True.") 
 
     encoder = encoder.to(device)
-    decoder = VAE_decoder(encoder.feat_size, encoder.input_dim).to(device)
+    decoder = decoder.to(device)
 
     # Retrieve reconstructions in eval mode
     encoder.eval()
     decoder.eval()
 
-    Xs = dataset[indices]
-    recon_Xs = decoder.reconstruct(encoder.get_features(Xs.to(device))).detach().cpu().numpy()
-    Xs = Xs.detach().cpu().numpy()
+    with torch.no_grad():
+        Xs = dataset[indices][0].to(device)
+        recon_Xs = decoder.reconstruct(encoder.get_features(Xs)).detach().cpu().numpy()
+        Xs = Xs.cpu().numpy()
 
     encoder.train()
     decoder.train()  
 
-    plot_util.plot_dsprite_image_doubles(Xs, recon_Xs, "Reconstr.", title=title)
+    plot_util.plot_dsprite_image_doubles(list(Xs), list(recon_Xs), "Reconstr.", title=title)
 
 
 
 def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="shape", 
-                    use_cuda=True):
+                    untrained=False, use_cuda=True):
     """
     plot_model_RSMs(encoders, dataset, sampler)
 
@@ -657,7 +666,8 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
     encoder_rsms = []
     encoder_latents = []
     for encoder in encoders:
-        encoder.eval()
+        if not encoder.untrained:
+            encoder.eval() # otherwise untrained batch norm messes things up
         encoder = encoder.to(device)
         all_features = []
         all_latents = []
@@ -668,14 +678,16 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
             else:
                 Xs, _ = dataset[indices]
             with torch.no_grad():
-                features = encoder.get_features(torch.Tensor(Xs).to(device)).cpu()
+                features = encoder.get_features(Xs.to(device))
             all_features.append(features)
             all_latents.append(dataset.dSprites.get_latent_values(
                 indices, latent_class_names=[sorting_latent]
             )[:, 0])
+
         all_features = torch.cat(all_features)
         all_latents = np.concatenate(all_latents)
-        rsm = data.calculate_torch_RSM(all_features).numpy()
+        rsm = data.calculate_torch_RSM(all_features).cpu().numpy()
+
         encoder_rsms.append(rsm)
         encoder_latents.append(all_latents)
 

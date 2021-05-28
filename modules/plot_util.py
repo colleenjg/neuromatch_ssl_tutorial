@@ -71,6 +71,9 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, titl
     if len(images) != len(image_doubles):
         raise ValueError("images and image_doubles must have the same length.")
 
+    if not isinstance(images, list) or not isinstance(image_doubles, list):
+        raise ValueError("Must pass images and image_doubles as lists.")
+
     plot_images = []
     ncols = np.min([len(images), ncols])
     n_sets = int(np.ceil(len(images) / ncols))

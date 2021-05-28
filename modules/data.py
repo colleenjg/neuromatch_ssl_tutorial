@@ -588,10 +588,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         y = torch.tensor(y)
 
         if self.simclr:
+            X = torch.tensor(X)
             X_aug = self.simclr_transforms(X)
             return X, X_aug, y
 
         else:
+            X = torch.tensor(X)
             return X, y
 
 
@@ -700,7 +702,7 @@ def calculate_torch_RSM(features, features_comp=None, stack=False):
             raise ValueError("features and features_comp should have the same shape.")
         features = torch.cat((features, features_comp), dim=0)
         features_comp = features
-    
+
     rsm = nn.functional.cosine_similarity(
         torch.flatten(features, start_dim=1).unsqueeze(0), 
         torch.flatten(features_comp, start_dim=1).unsqueeze(1), 
