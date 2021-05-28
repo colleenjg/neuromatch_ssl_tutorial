@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import torch
 from torch import nn
@@ -188,6 +190,12 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     encoder.to(device)
 
     classifier = nn.Linear(linear_input, dataset.num_classes).to(device)
+
+    if dataset.target_latent != "shape":
+        warnings.warn(f"Training a logistic regression on {dataset.target_latent} classification. "
+            f"with {dataset.num_classes} possible target classes. If there is a meaninful linear "
+            "relationship between the different classes, it might be better to train a linear "
+            "regression to predict the latent values, than a logistic regression to classify them.")
 
     # Define datasets and dataloaders
     train_subset_sampler = data.subsample_sampler(
