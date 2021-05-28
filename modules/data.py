@@ -341,7 +341,7 @@ class dSpritesDataset():
 
     def get_latent_values_from_classes(self, latent_classes, latent_class_name="shape"):
         """
-        self.get_latent_values()
+        self.get_latent_values_from_classes()
 
         Returns latent class values for each image.
 
@@ -667,11 +667,11 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         fig.suptitle(title, y=1.04)
 
 
-def calculate_torch_rsm(features, features_comp=None, stack=False):
+def calculate_torch_RSM(features, features_comp=None, stack=False):
     """
-    calculate_torch_rsm(features)
+    calculate_torch_RSM(features)
 
-    Calculates representation similarity matrix (RSM) between two feature matrices using
+    Calculates representational similarity matrix (RSM) between two feature matrices using
     pairwise cosine similarity. Uses torch.nn.functional.cosine_similarity()
 
     Required args:
@@ -703,11 +703,11 @@ def calculate_torch_rsm(features, features_comp=None, stack=False):
     return rsm
 
 
-def calculate_numpy_rsm(features, features_comp=None, stack=False, centered=False):
+def calculate_numpy_RSM(features, features_comp=None, stack=False, centered=False):
     """
-    calculate_numpy_rsm(features)
+    calculate_numpy_RSM(features)
 
-    Calculates representation similarity matrix (RSM) between two feature matrices using
+    Calculates representational similarity matrix (RSM) between two feature matrices using
     pairwise cosine similarity. If centered is True, this calculation is equivalent to 
     pairwise Pearson correlations. Uses numpy.
 
@@ -754,11 +754,11 @@ def calculate_numpy_rsm(features, features_comp=None, stack=False, centered=Fals
 
 
 def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None, 
-                       target_latent="shape"):
+                       sorting_latent="shape"):
     """
     plot_dsprites_RSMs(dataset, rsms, target_class_values)
 
-    Plots representation similarity matrices for dSprites data.
+    Plots representational similarity matrices for dSprites data.
 
     Required args:
     - dataset (dSpritesDataset): dSprites dataset
@@ -768,7 +768,8 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
 
     Optional args:
     - titles (list): title for each RSM. (default: None)
-    - target_latent (str): name of target latent class/feature. (default: "shape")
+    - sorting_latent (str): name of latent class/feature to sort rows 
+        and columns by. (default: "shape")
     """
 
     if isinstance(rsms, list):
@@ -791,20 +792,20 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
 
     _, axes = plot_util.plot_RSMs(rsms, titles)
 
-    dataset._check_class_name(target_latent)
+    dataset._check_class_name(sorting_latent)
 
     for subax, sub_target_class_values in zip(axes.flatten(), target_class_values):
         
         # check that target classes are sorted, and collect unique values and where they start
         target_change_idxs = np.insert(np.where(np.diff(sub_target_class_values))[0] + 1, 0, 0)
         unique_values = [sub_target_class_values[i] for i in target_change_idxs]
-        if target_latent == "shape":
+        if sorting_latent == "shape":
             unique_values = dataset.get_shapes_from_values(unique_values)
-        elif target_latent == "scale":
+        elif sorting_latent == "scale":
             unique_values = [f"{value:.1f}" for value in unique_values]
         
         # place major ticks at class boundaries and class labels between
-        if target_latent in ["shape", "scale"]:
+        if sorting_latent in ["shape", "scale"]:
             edge_ticks = np.append(target_change_idxs, len(sub_target_class_values))
             label_ticks = target_change_idxs + np.diff(edge_ticks) / 2
 
@@ -825,12 +826,12 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
                     )
 
         else:
-            if target_latent == "orientation":
+            if sorting_latent == "orientation":
                 nticks = 9
-            elif target_latent in ["posX", "posY"]:
+            elif sorting_latent in ["posX", "posY"]:
                 nticks = 11
 
-            possible_values = dataset.latent_class_values[target_latent]            
+            possible_values = dataset.latent_class_values[sorting_latent]            
             min_val = possible_values.min()
             max_val = possible_values.max()
 
@@ -842,5 +843,5 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
                 axis.set_ticks(ticks)
                 axis.set_ticklabels(ticklabels)
 
-        subax.set_xlabel(target_latent, labelpad=10)
+        subax.set_xlabel(sorting_latent, labelpad=10)
 

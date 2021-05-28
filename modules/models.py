@@ -373,7 +373,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
                 with torch.no_grad():
                     sorter = np.argsort(Y)
                     sorted_targets = Y[sorter]
-                    stacked_rsm = data.calculate_torch_rsm(
+                    stacked_rsm = data.calculate_torch_RSM(
                         features[sorter], features_aug[sorter], stack=True
                         ).cpu().numpy()
 
@@ -382,9 +382,9 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
                         sorted_targets, dataset.target_latent
                         ).squeeze()
                     sorted_target_values = np.tile(sorted_target_values, 2)
-                    data.plot_dsprites_rsms(
+                    data.plot_dsprites_RSMs(
                         dataset.dSprites, stacked_rsm, sorted_target_values, 
-                        titles=title, target_latent=dataset.target_latent
+                        titles=title, sorting_latent=dataset.target_latent
                         )
         
         loss_arr.append(total_loss / num_total)
@@ -622,46 +622,69 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
 
 
 
-# def plot_model_RSMs(encoders, dataset, sampler, use_cude=True):
+def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="shape", 
+                    use_cuda=True):
+    """
+    plot_model_RSMs(encoders, dataset, sampler)
 
-#     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
+    Plots RSMs for different models.
 
-#     for encoder in encoders:
-#         encoder = encoder.to(device)
+    Required args:
+    - encoders (list): list of EncoderCore() objects
+    - dataset (dSpritesTorchDataset): dSprites torch dataset
+    - sampler (SubsetRandomSampler): Sampler with the indices of images for which to 
+        plot the RSM.
+    
+    Optional args:
+    - titles (list): title for each RSM. (default: None)
+    - sorting_latent (str): name of latent class/feature to sort rows 
+        and columns by. (default: "shape")
+    - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    """
 
-#         dataloader = torch.utils.data.DataLoader(dataset, batch_size=1000, sampler=sampler)
+    device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    if not isinstance(encoders, list):
+        encoders = [encoders]
+        titles = [titles]
+    
+    if titles is not None and len(encoders) != len(titles):
+        raise ValueError("If providing titles, must provide as many as encoders.")
 
-#               with torch.no_grad():
-#                     sorter = np.argsort(Y)
-#                     sorted_targets = Y[sorter]
-#                     stacked_rsm = data.calculate_torch_rsm(
-#                         features[sorter], features_aug[sorter], stack=True
-#                         ).cpu().numpy()
+    batch_size = 1000
+    n_batches = int(np.ceil(len(sampler.indices) / batch_size))
 
-#                     title = f"Features (true/augm.): Epoch {epoch_n} (batch {batch_idx})"
-#                     sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
-#                         sorted_targets, dataset.target_latent
-#                         ).squeeze()
-#                     sorted_target_values = np.tile(sorted_target_values, 2)
-#                     data.plot_dsprites_rsms(
-#                         dataset.dSprites, stacked_rsm, sorted_target_values, 
-#                         titles=title, target_latent=dataset.target_latent
-#                         )
+    encoder_rsms = []
+    encoder_latents = []
+    for encoder in encoders:
+        encoder.eval()
+        encoder = encoder.to(device)
+        all_features = []
+        all_latents = []
+        for b_idx in range(n_batches):
+            indices = sampler.indices[b_idx * batch_size : (b_idx + 1) * batch_size]
+            if dataset.simclr:
+                Xs, _, _ = dataset[indices]
+            else:   
+                Xs, _ = dataset[indices]
+            with torch.no_grad():
+                features = encoder.get_features(Xs).cpu()
+            all_features.append(features)
+            all_latents.append(dataset.dSprites.get_latent_values(
+                indices, latent_class_names=[sorting_latent]
+            )[:, 0])
+        all_features = torch.cat(all_features)
+        all_latents = np.concatenate(all_latents)
+        rsm = data.calculate_torch_RSM(all_features).numpy()
+        encoder_rsms.append(rsm)
+        encoder_latents.append(all_latents)
+
+    data.plot_dsprites_RSMs(
+        dataset.dSprites, encoder_rsms, encoder_latents, 
+        titles=titles, sorting_latent=sorting_latent
+        )
         
 
-#     # Retrieve reconstructions in eval mode
-#     encoder.eval()
-#     decoder.eval()
-
-#     Xs = dataset[indices]
-#     recon_Xs = decoder.reconstruct(encoder.get_features(Xs.to(device))).detach().cpu().numpy()
-#     Xs = Xs.detach().cpu().numpy()
-
-#     encoder.train()
-#     decoder.train()  
-
-#     plot_util.plot_dsprite_image_doubles(Xs, recon_Xs, "Reconstr.", title=title)
 
 # class ResNet18Classifier(torchvision.models.resnet.ResNet):
 

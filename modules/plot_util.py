@@ -110,7 +110,7 @@ def plot_RSMs(rsms, titles=None):
     """
     plot_RSMs(rsms)
 
-    Plots representation similarity matrices.
+    Plots representational similarity matrices.
 
     Required args:
     - rsms (list): list of 2D RSMs arrays.
@@ -137,7 +137,7 @@ def plot_RSMs(rsms, titles=None):
     wid = 6
 
     fig, axes = plt.subplots(ncols=ncols, figsize=[ncols * wid, wid], squeeze=False)
-    fig.suptitle("Representation Similarity Matrices (RSMs)", y=1.05)
+    fig.suptitle("Representational Similarity Matrices (RSMs)", y=1.05)
 
     cm_w = 0.05 / ncols
     fig.subplots_adjust(right=1-cm_w*2)
