@@ -548,7 +548,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 self.simclr_transforms = simclr_transforms
                 if self.simclr_transforms is None:
                     self.simclr_transforms = torchvision.transforms.RandomAffine(
-                        degrees=90, translate=(0.2, 0.2), # scale=(0.8, 1.2) # scale doesn't seem to help
+                        degrees=90, translate=(0.2, 0.2), scale=(0.8, 1.2)
                     )
 
         self.torchvision_transforms = torchvision_transforms
