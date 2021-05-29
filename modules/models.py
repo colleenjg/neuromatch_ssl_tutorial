@@ -988,29 +988,27 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             "all labelled_fractions must be between (0, 1) (excl, incl)"
             )
 
-    train_acc = np.zeros(len(labelled_fractions))
-    test_acc = np.zeros_like(train_acc)
+    train_acc = np.full(len(labelled_fractions), np.nan)
+    test_acc = np.full(len(labelled_fractions), np.nan)
 
     freeze_str = "" if freeze_features else "*"
 
     if verbose and encoder_label is not None:
-        add_str = "" if freeze_features else " and encoder"
+        add_str = "" if freeze_features else " and encoders"
         print(f"{encoder_label[0].capitalize()}{encoder_label[1:]} "
-            f"encoder - training classifier{add_str}{freeze_str}:")
+            f"encoder - training classifiers{add_str}{freeze_str}")
 
     if not freeze_features: # retain original
         orig_encoder = copy.deepcopy(encoder)
 
-    for i, labelled_fraction in tqdm(enumerate(labelled_fractions)):
+    n_fractions = len(labelled_fractions)
+    for i in tqdm(range(n_fractions)):
         show_progress_bars(False)
         if not freeze_features: # obtain new fresh version
             encoder = copy.deepcopy(orig_encoder)
-        if verbose:
-            print(f"    using {int(labelled_fraction * 100):.2f}% of "
-                "available labelled data...")
         _,  _, train_acc[i], test_acc[i] = train_classifier(
             encoder, dataset, train_sampler, test_sampler, 
-            num_epochs=num_epochs, fraction_of_labels=labelled_fraction, 
+            num_epochs=num_epochs, fraction_of_labels=labelled_fractions[i], 
             freeze_features=freeze_features, subset_seed=subset_seed, 
             verbose=False
             )
