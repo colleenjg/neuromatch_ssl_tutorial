@@ -9,8 +9,9 @@ def plot_dsprites_images(images, ncols=5, title=None):
     Plots dSprites images.
 
     Required args:
-    - images (array-like): list or array of images (allows None values to skip subplots).
-        If each image has 3 dimensions, the first is assumed to be the channels, and is 
+    - images (array-like): list or array of images (allows None values to 
+        skip subplots). If each image has 3 dimensions, the first is assumed 
+        to be the channels, and is 
         averaged across.
 
     Optional args:
@@ -48,7 +49,8 @@ def plot_dsprites_images(images, ncols=5, title=None):
     return fig, axes
 
 
-def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, title=None):
+def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, 
+                               title=None):
     """
     plot_dsprite_image_doubles(images, image_doubles, doubles_str)
 
@@ -69,7 +71,10 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, titl
     """
 
     if len(images) != len(image_doubles):
-        raise ValueError("images and image_doubles must have the same length.")
+        raise ValueError(
+            "images and image_doubles must have the same length, but have "
+            f"length {len(images)} and {len(image_doubles)}, respectively."
+            )
 
     if not isinstance(images, list) or not isinstance(image_doubles, list):
         raise ValueError("Must pass images and image_doubles as lists.")
@@ -82,7 +87,9 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5, titl
         extend_image_doubles = image_doubles[i * ncols : (i + 1) * ncols]
         padding = [None] * (ncols - len(extend_images))
 
-        plot_images.extend(extend_images + padding + extend_image_doubles + padding)
+        plot_images.extend(
+            extend_images + padding + extend_image_doubles + padding
+            )
 
     fig, axes = plot_dsprites_images(plot_images, ncols=ncols)
     if title is not None:
@@ -139,7 +146,9 @@ def plot_RSMs(rsms, titles=None):
     ncols = len(rsms)
     wid = 6
 
-    fig, axes = plt.subplots(ncols=ncols, figsize=[ncols * wid, wid], squeeze=False)
+    fig, axes = plt.subplots(
+        ncols=ncols, figsize=[ncols * wid, wid], squeeze=False
+        )
     fig.suptitle("Representational Similarity Matrices (RSMs)", y=1.05)
 
     cm_w = 0.05 / ncols

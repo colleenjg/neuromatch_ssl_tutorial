@@ -13,13 +13,14 @@ from . import plot_util
 DEFAULT_DATASET_NPZ_PATH = os.path.join("dsprites", "dsprites_subset.npz")
 
 
-def get_biased_indices(dataset, indices, bias="shape_posX", control=False, randst=None):
+def get_biased_indices(dataset, indices, bias="shape_posX", control=False, 
+                       randst=None):
     """
     get_biased_indices(dataset, indices)
 
-    Returns indices after removing those rejected given the requested bias. For example, 
-    if the bias is 'heart_right', the indices of any images where the heart is on the right 
-    are removed.
+    Returns indices after removing those rejected given the requested bias. 
+    For example, if the bias is 'heart_right', the indices of any images where 
+    the heart is on the right are removed.
 
     Required args:
     - dataset (torch dSprites dataset): dSprites torch dataset
@@ -30,9 +31,11 @@ def get_biased_indices(dataset, indices, bias="shape_posX", control=False, rands
         'heart_left': only include hearts on the left
         'shape_posX': correlate shape to posX
         (default: "heart_left")
-    - control (bool): if True, the same number of items are excluded, as determined by the bias, 
-        but they are randomly selected. (default: False)
-    - randst (torch Generator or int): random state to use when splitting dataset. (default: None)
+    - control (bool): if True, the same number of items are excluded, as 
+        determined by the bias, but they are randomly selected. 
+        (default: False)
+    - randst (torch Generator or int): random state to use when splitting 
+        dataset. (default: None)
 
     Returns
     - indices (1D np array): indices retained
@@ -58,19 +61,26 @@ def get_biased_indices(dataset, indices, bias="shape_posX", control=False, rands
             posX_val_splits = np.array_split(posX_vals, len(shape_vals)) # unequal split allowed
         elif bias == "shape_posX_spaced":
             posX_val_edges = [[0, 0.3], [0.35, 0.65], [0.7, 1.0]]
-            posX_val_splits = [
-                [val for val in posX_vals if val >= edges[0] and val < edges[1]] 
-                    for edges in posX_val_edges]
+            posX_val_splits = [[
+                val for val in posX_vals if val >= edges[0] and val < edges[1]
+                ] for edges in posX_val_edges]
         for shape_val, pos_valX_split in zip(shape_vals, posX_val_splits):
-            exclude_bool += ((shapes == shape_val) * ~np.isin(posXs, pos_valX_split))
+            exclude_bool += (
+                (shapes == shape_val) * ~np.isin(posXs, pos_valX_split)
+                )
     
     else:
-        raise NotImplementedError("Only 'heart_left' and 'shape_posX' bias. are currently implemented.")
+        raise NotImplementedError(
+            f"{bias} bias is not implemented. Only 'heart_left' and " 
+            "'shape_posX' biases are currently implemented."
+            )
 
     if control: # randomly permute the exclusion boolean
         if isinstance(randst, int):
             randst = torch.random.manual_seed(randst)
-        exclude_bool = exclude_bool[torch.randperm(len(exclude_bool), generator=randst)]
+        exclude_bool = exclude_bool[
+            torch.randperm(len(exclude_bool), generator=randst)
+            ]
 
     indices = indices[~exclude_bool]
 
@@ -85,8 +95,8 @@ def subsample_sampler(sampler, fraction_sample=1.0, randst=None):
     - sampler (SubsetRandomSampler): dataset sampler
 
     Optional args:
-    - fraction_sample (float): fraction of sampler indices to retain in new sample.
-        (default: 1.0)
+    - fraction_sample (float): fraction of sampler indices to retain in 
+        new sample.(default: 1.0)
     - randst (torch Generator or int): random state to use when subsampling. 
         (default: None)
     
@@ -95,38 +105,50 @@ def subsample_sampler(sampler, fraction_sample=1.0, randst=None):
     """
     
     if 1 <= fraction_sample <= 0:
-        raise ValueError("fraction_sample must be between 0 and 1, inclusively.")
+        raise ValueError(
+            "fraction_sample must be between 0 and 1, inclusively, but "
+            f"found {fraction_sample}."
+            )
 
     subset_size = int(fraction_sample * len(sampler.indices))
 
     if isinstance(randst, int):
         randst = torch.random.manual_seed(randst)
 
-    sampler_indices = sampler.indices[torch.randperm(len(sampler.indices), generator=randst)]
+    sampler_indices = sampler.indices[
+        torch.randperm(len(sampler.indices), generator=randst)
+        ]
 
-    sub_sampler = torch.utils.data.SubsetRandomSampler(sampler_indices[: subset_size])
+    sub_sampler = torch.utils.data.SubsetRandomSampler(
+        sampler_indices[: subset_size]
+        )
 
     return sub_sampler
 
 
-def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=None, 
-                         control=False):
+def train_test_split_idx(dataset, fraction_train=0.8, randst=None, 
+                         train_bias=None, control=False):
     """
     train_test_split_idx(dataset)
 
-    Splits dataset into train and test (or any other set of 2 complementary subsets).
+    Splits dataset into train and test (or any other set of 2 complementary 
+    subsets).
 
     Required args:
     - dataset (torch dSprites dataset): dSprites torch dataset
 
     Optional args:
-    - fraction_train (prop): fraction of dataset to allocate to training set. (default 0.8)
-    - randst (torch Generator or int): random state to use when splitting dataset. (default: None)
-    - train_bias (str): type of bias to introduce into the training dataset, after the split is done.
-        e.g., 'heart_left' (only hearts on left are included) or 'shape_posX' (shape and posX are 
+    - fraction_train (prop): fraction of dataset to allocate to training set. 
+        (default 0.8)
+    - randst (torch Generator or int): random state to use when splitting 
+        dataset. (default: None)
+    - train_bias (str): type of bias to introduce into the training dataset, 
+        after the split is done, e.g., 'heart_left' (only hearts on left are 
+        included) or 'shape_posX' (shape and posX are 
         correlated) (default: None)
-    - control (bool): if True, the same number of items are removed from the training dataset as 
-        the train_bias would determine, but they are randomly selected. (default: False)
+    - control (bool): if True, the same number of items are removed from the 
+        training dataset as the train_bias would determine, but they are 
+        randomly selected. (default: False)
 
     Returns:
     - train_sampler (SubsetRandomSampler): training dataset sampler (unseeded)
@@ -134,11 +156,14 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
     """
 
     if not isinstance(dataset, dSpritesTorchDataset):
-        raise ValueError("Expected dataset to be of type dSpritesTorchDataset, but "
-            f"found {type(dataset)}.")
+        raise ValueError("Expected dataset to be of type "
+            f"dSpritesTorchDataset, but found {type(dataset)}.")
 
     if 1 <= fraction_train <= 0:
-        raise ValueError("fraction_train must be between 0 and 1, inclusively.")
+        raise ValueError(
+            "fraction_train must be between 0 and 1, inclusively, but "
+            f"found {fraction_train}."
+            )
 
     train_size = int(fraction_train * len(dataset))
 
@@ -168,7 +193,7 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None, train_bias=No
 
 class dSpritesDataset():
     
-    def __init__(self, dataset_path=DEFAULT_DATASET_NPZ_PATH, preload=True):
+    def __init__(self, dataset_path=DEFAULT_DATASET_NPZ_PATH):
         """
         Initializes dSpritesDataset instance, sets basic attributes and 
         metadata attributes.
@@ -176,8 +201,6 @@ class dSpritesDataset():
         Optional args:
         - dataset_path (str): path to dataset 
             (default: global variable DEFAULT_DATASET_NPZ_PATH)
-        - preload (bool): if True, images and latent classes are preloaded into memory.
-            (default: True)
 
         Attributes:
         - dataset_path (str): path to the dataset
@@ -186,7 +209,9 @@ class dSpritesDataset():
         """
 
         self.dataset_path = dataset_path
-        self.npz = np.load(self.dataset_path, allow_pickle=True, encoding="latin1")
+        self.npz = np.load(
+            self.dataset_path, allow_pickle=True, encoding="latin1"
+            )
         self._load_metadata()
 
 
@@ -212,7 +237,8 @@ class dSpritesDataset():
         """
         Lazily load and returns latent classes for each dataset image.
 
-        - self._latent_classes (3D np array): latent class values for each image (image x latent)
+        - self._latent_classes (3D np array): latent class values for each 
+            image (image x latent)
         """
 
         if not hasattr(self, "_latent_classes"):
@@ -246,8 +272,8 @@ class dSpritesDataset():
         - title (str): dataset title
         - value_to_shape_name_map (dict): mapping of shape values (1, 2, 3) to 
             shape names ("square", "oval", "heart") 
-        - shape_name_to_value_map (dict): mapping of shape names ("square", "oval", "heart") to
-            shape values (1, 2, 3)
+        - shape_name_to_value_map (dict): mapping of shape names 
+            ("square", "oval", "heart") to shape values (1, 2, 3)
         """
 
         metadata = self.npz["metadata"][()]
@@ -278,7 +304,8 @@ class dSpritesDataset():
         Raises an error if latent_class_name is not recognized.
 
         Optional args:
-        - latent_class_name (str): name of latent class to check. (default: "shape")
+        - latent_class_name (str): name of latent class to check. 
+            (default: "shape")
         """
         if latent_class_name not in self.latent_class_names:
             latent_names_str = ", ".join(self.latent_class_names)
@@ -312,7 +339,9 @@ class dSpritesDataset():
         latent_name_idxs = []
         for latent_class_name in latent_class_names:
             self._check_class_name(latent_class_name)
-            latent_name_idxs.append(self.latent_class_names.index(latent_class_name)) 
+            latent_name_idxs.append(
+                self.latent_class_names.index(latent_class_name)
+                ) 
 
         return latent_name_idxs  
 
@@ -345,7 +374,8 @@ class dSpritesDataset():
         return self.latent_classes[indices][:, latent_class_name_idxs]
 
 
-    def get_latent_values_from_classes(self, latent_classes, latent_class_name="shape"):
+    def get_latent_values_from_classes(self, latent_classes, 
+                                       latent_class_name="shape"):
         """
         self.get_latent_values_from_classes()
 
@@ -368,7 +398,10 @@ class dSpritesDataset():
 
         if (latent_classes < 0).any():
             raise ValueError("Classes cannot be below 0.")
-        if (latent_classes > len(self.latent_class_values[latent_class_name])).any():
+        
+
+        num_classes = len(self.latent_class_values[latent_class_name])
+        if (latent_classes >= num_classes).any():
             raise ValueError("Classes cannot exceed the number of class "
                 "values for the latent class.")
 
@@ -427,7 +460,8 @@ class dSpritesDataset():
         if set(shape_values) - set([1, 2, 3]):
             raise ValueError("Numerical shape values include only 1, 2 and 3.")
 
-        shape_names = [self.value_to_shape_name_map[int(value)] for value in shape_values]
+        shape_names = [self.value_to_shape_name_map[int(value)] 
+            for value in shape_values]
 
         return shape_names
 
@@ -440,24 +474,26 @@ class dSpritesDataset():
         Adapted from https://github.com/deepmind/dsprites-dataset/blob/master/dsprites_reloading_example.ipynb
 
         Optional args:
-        - indices (array-like): indices of images to plot. If None, they are sampled randomly.
-            (default: None)
-        - num_images (int): number of images to sample and plot, if indices is None.
-            (default: 10)
-        - randst (np.random.RandomState): seed or random state to use if sampling images.
-            If None, the global state is used.
+        - indices (array-like): indices of images to plot. If None, they are 
+            sampled randomly. (default: None)
+        - num_images (int): number of images to sample and plot, if indices 
+            is None. (default: 10)
+        - randst (np.random.RandomState): seed or random state to use if 
+            sampling images. If None, the global state is used.
             (default: None)
         """
 
         if indices is None:
             if num_images > self.num_images:
-                raise ValueError("Cannot sample more images than the number of images "
-                    f"in the dataset ({self.num_images}).")
+                raise ValueError("Cannot sample more images than the number "
+                    f"of images in the dataset ({self.num_images}).")
             if randst is None:
                 randst = np.random
             elif isinstance(randst, int):
                 randst = np.random.RandomState(randst)
-            indices = randst.choice(np.arange(self.num_images), num_images, replace=False)
+            indices = randst.choice(
+                np.arange(self.num_images), num_images, replace=False
+                )
         else:
             num_images = len(indices)
 
@@ -470,22 +506,31 @@ class dSpritesDataset():
         latent_values = self.get_latent_values(indices)
         shape_names = self.get_shapes_from_values(latent_values[:, 0])
 
-        fig.suptitle(f"{num_images} images sampled from the dSprites dataset", y=1.04)
+        fig.suptitle(
+            f"{num_images} images sampled from the dSprites dataset", y=1.04
+            )
         for ax_i, ax in enumerate(axes.flatten()):
             if ax_i < num_images:
-                img_latent_values = [f"{value:.2f}" for value in latent_values[ax_i]]
-                img_latent_values[0] = f"{latent_values[ax_i, 0]} ({shape_names[ax_i]})"
+                img_latent_values = [
+                    f"{value:.2f}" for value in latent_values[ax_i
+                    ]]
+                img_latent_values[0] = \
+                    f"{latent_values[ax_i, 0]} ({shape_names[ax_i]})"
                 if not (ax_i % ncols):
-                    title = "\n".join([f"{name}: {value}" for name, value in zip(
-                        self.latent_class_names, img_latent_values)])
+                    title = "\n".join(
+                        [f"{name}: {value}" for name, value in zip(
+                            self.latent_class_names, img_latent_values)
+                            ]
+                        )
                 else:
                     title = "\n".join(img_latent_values)
                 ax.set_xlabel(title, fontsize="x-small")
 
 
 class dSpritesTorchDataset(torch.utils.data.Dataset):
-    def __init__(self, dSprites, target_latent="shape", torchvision_transforms=None, 
-                 resize=None, rgb_expand=False, simclr=False, spijk=None, simclr_transforms=None):
+    def __init__(self, dSprites, target_latent="shape", 
+                 torchvision_transforms=None, resize=None, rgb_expand=False, 
+                 simclr=False, spijk=None, simclr_transforms=None):
         """
         Initialized a custom Torch dataset for dSprites, and sets attributes.
 
@@ -493,22 +538,30 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         - dSprites (dSpritesDataset): dSprites dataset
 
         Optional args:
-        - target_latent (str): latent dimension to use as target. (default: "shape")
-        - torchvision_transforms (torchvision.transforms): torchvision transforms to apply to X.
+        - target_latent (str): latent dimension to use as target. 
+            (default: "shape")
+        - torchvision_transforms (torchvision.transforms): torchvision 
+            transforms to apply to X. (default: None)
+        - resize (None or int): if not None, should be an int, namely the 
+            size to which X is expanded along its height and width. 
             (default: None)
-        - resize (None or int): if not None, should be an int, namely the size to which X is 
-            expanded along its height and width. (default: None)
-        - rgb_expand (bool): if True, X is expanded to include 3 identical channels. Applied 
-            after any torchvision_tranforms. (default: False)
-        - simclr (bool or str): if True, SimCLR-specific transformations are applied. (default: False)
-        - spijk (str): If not None, the SimCLR transforms are drawn from this implementation 
-            (https://github.com/Spijkervet/SimCLR), using either "train" or "test" transforms, as 
-            specified. All other transforms are overridden. Ignored if simclr is False. (default: None) 
-        - simclr_transforms (torchvision.transforms): SimCLR-specific transforms. Used only if simclr 
-            is True, and spikj is None. If None, default SimCLR transforms are applied. (default: None)
+        - rgb_expand (bool): if True, X is expanded to include 3 identical 
+            channels. Applied after any torchvision_tranforms. 
+            (default: False)
+        - simclr (bool or str): if True, SimCLR-specific transformations are 
+            applied. (default: False)
+        - spijk (str): If not None, the SimCLR transforms are drawn from this 
+            implementation (https://github.com/Spijkervet/SimCLR), using 
+            either "train" or "test" transforms, as specified. All other 
+            transforms are overridden. Ignored if simclr is False. 
+            (default: None) 
+        - simclr_transforms (torchvision.transforms): SimCLR-specific 
+            transforms. Used only if simclr is True, and spikj is None. If 
+            None, default SimCLR transforms are applied. (default: None)
 
         Sets attributes:
-        - X (2 or 3D np array): image array (channels (optional) x height x width).
+        - X (2 or 3D np array): image array 
+            (channels (optional) x height x width).
         - y (1D np array): targets
 
         ...
@@ -518,14 +571,21 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         self.target_latent = target_latent
 
         self.X = self.dSprites.images
-        self.y = self.dSprites.get_latent_classes(latent_class_names=target_latent).squeeze()
-        self.num_classes = len(self.dSprites.latent_class_values[self.target_latent])
+        self.y = self.dSprites.get_latent_classes(
+            latent_class_names=target_latent
+            ).squeeze()
+        self.num_classes = \
+            len(self.dSprites.latent_class_values[self.target_latent])
         
         if len(self.X) != len(self.y):
-            raise ValueError("images and latent classes must have the same length.")
+            raise ValueError(
+                "images and latent classes must have the same length, but "
+                f"found {len(self.X)} and {len(self.y)}, respectively."
+                )
         
         if len(self.X.shape) not in [3, 4]:
-            raise ValueError("images should have 3 or 4 dimensions.")
+            raise ValueError("images should have 3 or 4 dimensions, but "
+                f"found {len(self.X.shape)}.")
 
         self.simclr = simclr
         self.spijk = None
@@ -537,29 +597,37 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 torchvision_transforms = False
                 
                 if self.spijk not in ["train", "test"]:
-                    raise ValueError("spijk must be 'train' or 'test'.")
+                    raise ValueError("spijk must be 'train' or 'test', but "
+                        f"found {self.spijk}.")
                 from simclr.modules.transformations import TransformsSimCLR
                 if self.spijk == "train":
-                    self.simclr_transforms = TransformsSimCLR(size=224).train_transform
+                    self.simclr_transforms = \
+                        TransformsSimCLR(size=224).train_transform
                 else:
-                    self.simclr_transforms = TransformsSimCLR(size=224).test_transform
+                    self.simclr_transforms = \
+                        TransformsSimCLR(size=224).test_transform
 
             else:
                 self.simclr_transforms = simclr_transforms
                 if self.simclr_transforms is None:
-                    self.simclr_transforms = torchvision.transforms.RandomAffine(
-                        degrees=90, translate=(0.2, 0.2), scale=(0.8, 1.2)
-                    )
+                    self.simclr_transforms = \
+                        torchvision.transforms.RandomAffine(
+                            degrees=90, translate=(0.2, 0.2), scale=(0.8, 1.2)
+                        )
 
         self.torchvision_transforms = torchvision_transforms
         
         self.resize = resize
         if self.resize is not None:
-            self.resize_transform = torchvision.transforms.Resize(size=self.resize)
+            self.resize_transform = \
+                torchvision.transforms.Resize(size=self.resize)
 
         self.rgb_expand = rgb_expand
         if self.rgb_expand and len(self.X[0].shape) != 2:
-            raise ValueError("If rgb_expand is True, X should have 2 dimensions.")
+            raise ValueError(
+                "If rgb_expand is True, X should have 2 dimensions, but it"
+                f" has {len(self.X[0].shape)} dimensions."
+                )
 
         self.ch_expand = False
         if len(self.X[0].shape) == 2 and not (self.rgb_expand or self.spijk):
@@ -607,11 +675,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         """
         self._preprocess_simclr_spijk(X)
         
-        Preprocess X for SimCLR transformations of the SimCLR implementation available 
-        here: https://github.com/Spijkervet/SimCLR
+        Preprocess X for SimCLR transformations of the SimCLR implementation 
+        available here: https://github.com/Spijkervet/SimCLR
 
         Required args:
-        - X (2 or 3D np array): image array (height x width x channels (optional)). 
+        - X (2 or 3D np array): image array 
+            (height x width x channels (optional)). 
             All values expected to be between 0 and 1.
         
         Returns:
@@ -623,10 +692,15 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         elif len(X.shape) == 3:
             X = np.transpose(X, [1, 2, 0]) # place channels last
         else:
-            raise ValueError("Expected a 2 or 3-dimensional input for X for SimCLR transform.")
+            raise ValueError(
+                "Expected X to have 2 or 3 dimensions for SimCLR "
+                f"transform, but it has {len(X.shape)} dimensions."
+                )
         
         if X.max() >= 1 or X.min() <= 0:
-            raise NotImplementedError("Expected X to be between 0 and 1 for SimCLR transform.")
+            raise NotImplementedError(
+                "Expected X to be between 0 and 1 for SimCLR transform."
+                )
 
         X = Image.fromarray(np.uint8(X * 255)).convert("RGB")
 
@@ -640,25 +714,27 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         Plots dSprites images, as well as their augmentations if applicable.
 
         Optional args:
-        - indices (array-like): indices of images to plot. If None, they are sampled randomly.
-            (default: None)
-        - num_images (int): number of images to sample and plot, if indices is None.
-            (default: 10)
+        - indices (array-like): indices of images to plot. If None, they are 
+            sampled randomly. (default: None)
+        - num_images (int): number of images to sample and plot, if indices is 
+            None. (default: 10)
         - ncols (int): number of columns to plot. (default: 5)
-        - randst (np.random.RandomState): seed or random state to use if sampling images.
-            If None, the global state is used. (Does not control SimCLR transformations.)
-            (default: None)
+        - randst (np.random.RandomState): seed or random state to use if 
+            sampling images. If None, the global state is used. (Does not 
+            control SimCLR transformations.) (default: None)
         """
 
         if indices is None:
             if num_images > self.num_samples:
-                raise ValueError("Cannot sample more images than the number of images "
-                    f"in the dataset ({self.num_samples}).")
+                raise ValueError("Cannot sample more images than the number "
+                    f"of images in the dataset ({self.num_samples}).")
             if randst is None:
                 randst = np.random
             elif isinstance(randst, int):
                 randst = np.random.RandomState(randst)
-            indices = randst.choice(np.arange(self.num_samples), num_images, replace=False)
+            indices = randst.choice(
+                np.arange(self.num_samples), num_images, replace=False
+                )
         else:
             num_images = len(indices)
 
@@ -674,8 +750,9 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         title = f"{num_images} dataset images"
         if self.simclr:
             title = f"{title} and augmentations"
-            fig, _ = plot_util.plot_dsprite_image_doubles(Xs, X_augs, "Augm.", ncols=ncols)
-
+            fig, _ = plot_util.plot_dsprite_image_doubles(
+                Xs, X_augs, "Augm.", ncols=ncols
+                )
         else:
             fig, _ = plot_util.plot_dsprites_images(Xs, ncols=ncols)
         
@@ -686,26 +763,35 @@ def calculate_torch_RSM(features, features_comp=None, stack=False):
     """
     calculate_torch_RSM(features)
 
-    Calculates representational similarity matrix (RSM) between two feature matrices using
-    pairwise cosine similarity. Uses torch.nn.functional.cosine_similarity()
+    Calculates representational similarity matrix (RSM) between two feature 
+    matrices using pairwise cosine similarity. 
+    Uses torch.nn.functional.cosine_similarity()
 
     Required args:
     - features (2D torch Tensor): feature matrix (items x features)
 
     Optional args
-    - features_comp (2D torch Tensor): second feature matrix (items x features). If 
-        None, features is compared to itself. (default: None)
-    - stack (bool): if True, feature and features_comp are first stacked along the 
-        items dimension, and the resulting matrix is compared to itself. (default: False)
+    - features_comp (2D torch Tensor): second feature matrix 
+        (items x features). If None, features is compared to itself. 
+        (default: None)
+    - stack (bool): if True, feature and features_comp are first stacked 
+        along the items dimension, and the resulting matrix is compared to 
+        itself. (default: False)
     """
 
     if features_comp is None:
         if stack:
-            raise ValueError("stack cannot be set to True if features_comp is None.")
+            raise ValueError(
+                "stack cannot be set to True if features_comp is None."
+                )
         features_comp = features
     else:
         if features.shape != features_comp.shape:
-            raise ValueError("features and features_comp should have the same shape.")
+            raise ValueError(
+                "features and features_comp should have the same shape, but "
+                f"found shapes {features.shape} and {features_comp.shape} "
+                "respectively."
+                )
         features = torch.cat((features, features_comp), dim=0)
         features_comp = features
 
@@ -718,33 +804,41 @@ def calculate_torch_RSM(features, features_comp=None, stack=False):
     return rsm
 
 
-def calculate_numpy_RSM(features, features_comp=None, stack=False, centered=False):
+def calculate_numpy_RSM(features, features_comp=None, stack=False, 
+                        centered=False):
     """
     calculate_numpy_RSM(features)
 
-    Calculates representational similarity matrix (RSM) between two feature matrices using
-    pairwise cosine similarity. If centered is True, this calculation is equivalent to 
-    pairwise Pearson correlations. Uses numpy.
+    Calculates representational similarity matrix (RSM) between two feature 
+    matrices using pairwise cosine similarity. If centered is True, this 
+    calculation is equivalent to pairwise Pearson correlations. Uses numpy.
 
     Required args:
     - features (2D np array): feature matrix (items x features)
 
     Optional args
-    - features_comp (2D np array): second feature matrix (items x features). If 
-        None, features is compared to itself. (default: None)
-    - stack (bool): if True, feature and features_comp are first stacked along the 
-        items dimension, and the resulting matrix is compared to itself. (default: False)
-    - centered (bool): if True, the mean across features is first subtracted for each item.
-        (default: False)  
+    - features_comp (2D np array): second feature matrix (items x features). 
+        If None, features is compared to itself. (default: None)
+    - stack (bool): if True, feature and features_comp are first stacked 
+        along the items dimension, and the resulting matrix is compared to 
+        itself. (default: False)
+    - centered (bool): if True, the mean across features is first subtracted 
+        for each item. (default: False)  
     """
 
     if features_comp is None:
         if stack:
-            raise ValueError("stack cannot be set to True if features_comp is None.")
+            raise ValueError(
+                "stack cannot be set to True if features_comp is None."
+                )
         features_comp = features
     else:
         if features.shape != features_comp.shape:
-            raise ValueError("features and features_comp should have the same shape.")
+            raise ValueError(
+                "features and features_comp should have the same shape, but "
+                f"found shapes {features.shape} and {features_comp.shape} "
+                "respectively."
+                )
         features = np.concatenate((features, features_comp), axis=0)
         features_comp = features
 
@@ -789,9 +883,13 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
 
     if isinstance(rsms, list):
         if len(rsms) != len(target_class_values):
-            raise ValueError("Must pass as many target_class_values as rsms.") 
+            raise ValueError(
+                f"Must pass as many target_class_values as rsms ({len(rsms)})."
+                ) 
         if not isinstance(titles, list) or len(titles) != len(rsms):
-            raise ValueError("Must pass as many titles as rsms.")
+            raise ValueError(
+                f"Must pass as many titles as rsms ({len(rsms)})."
+                )
     
     else: # place in lists
         rsms = [rsms]
@@ -800,7 +898,10 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
     
     for r, rsm_target_class_values in enumerate(target_class_values):
         if len(rsm_target_class_values) != len(rsms[r]):
-            raise ValueError("Must provide as many target_class_values as RSM rows/cols.")
+            raise ValueError(
+                "Must provide as many target_class_values as RSM rows/cols "
+                f"({len(rsms[r])})."
+                )
         sorter = np.argsort(rsm_target_class_values)
         target_class_values[r] = rsm_target_class_values[sorter]
         rsms[r] = rsms[r][sorter][:, sorter]
@@ -809,11 +910,14 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
 
     dataset._check_class_name(sorting_latent)
 
-    for subax, sub_target_class_values in zip(axes.flatten(), target_class_values):
+    for subax, sub_targ_class_vals in zip(axes.flatten(), target_class_values):
         
-        # check that target classes are sorted, and collect unique values and where they start
-        target_change_idxs = np.insert(np.where(np.diff(sub_target_class_values))[0] + 1, 0, 0)
-        unique_values = [sub_target_class_values[i] for i in target_change_idxs]
+        # check that target classes are sorted, and collect unique values 
+        # and where they start
+        target_change_idxs = np.insert(
+            np.where(np.diff(sub_targ_class_vals))[0] + 1, 
+            0, 0)
+        unique_values = [sub_targ_class_vals[i] for i in target_change_idxs]
         if sorting_latent == "shape":
             unique_values = dataset.get_shapes_from_values(unique_values)
         elif sorting_latent == "scale":
@@ -822,10 +926,14 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
         # place major ticks at class boundaries and class labels between
         sorting_latent_str = sorting_latent
         if sorting_latent in ["shape", "scale"]:
-            edge_ticks = np.append(target_change_idxs, len(sub_target_class_values))
+            edge_ticks = np.append(
+                target_change_idxs, len(sub_targ_class_vals)
+                )
             label_ticks = target_change_idxs + np.diff(edge_ticks) / 2
 
-            for axis, rotation in zip([subax.xaxis, subax.yaxis], ["horizontal", "vertical"]):
+            for axis, rotation in zip(
+                [subax.xaxis, subax.yaxis], ["horizontal", "vertical"]
+                ):
                 if rotation == "horizontal":
                     kwargs = {"ha": "center"}
                 else:
@@ -838,7 +946,8 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
                 axis.set_ticks(label_ticks, minor=True)
                 axis.set_tick_params(length=0, which="minor")
                 axis.set_ticklabels(
-                    unique_values, minor=True, fontsize=14, rotation=rotation, **kwargs
+                    unique_values, minor=True, fontsize=14, rotation=rotation, 
+                    **kwargs
                     )
 
         else:
@@ -852,7 +961,7 @@ def plot_dsprites_RSMs(dataset, rsms, target_class_values, titles=None,
             min_val = possible_values.min()
             max_val = possible_values.max()
 
-            ticks = np.linspace(0, len(sub_target_class_values), nticks)
+            ticks = np.linspace(0, len(sub_targ_class_vals), nticks)
             ticklabels = np.linspace(min_val, max_val, nticks)
             ticklabels = [f"{ticklabel:.1f}" for ticklabel in ticklabels]      
 

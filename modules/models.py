@@ -1,4 +1,5 @@
 import copy
+from functools import partialmethod
 import warnings
 
 import numpy as np
@@ -11,6 +12,26 @@ from matplotlib import pyplot as plt
 from . import data, plot_util
 
 DEFAULT_LABELLED_FRACTIONS = [0.05, 0.1, 0.2, 0.4, 0.75, 1.0]
+
+
+def show_progress_bars(enable=True):
+    """
+    show_progress_bars()
+
+    Enabled or disables tqdm progress bars.
+
+    Optional args:
+    - enabled (bool or str): progress bar setting ("reset" to previous)
+    """
+
+    if enable == "reset":
+        if hasattr(tqdm, "_patch_prev_enable"):
+            enable = tqdm._patch_prev_enable
+        else:
+            enable = True
+
+    tqdm.__init__ = partialmethod(tqdm.__init__, disable=not(enable))
+    tqdm._patch_prev_enable = not(enable)
 
 
 def get_model_device(model):
@@ -55,8 +76,8 @@ class EncoderCore(nn.Module):
 
         super().__init__()
 
-        self.vae = vae
-        self.untrained = True
+        self._vae = vae
+        self._untrained = True
 
         # check input dimensions provided
         self.input_dim = tuple(input_dim)
@@ -64,12 +85,15 @@ class EncoderCore(nn.Module):
             self.input_dim = (1, *input_dim)            
         elif len(self.input_dim) != 3:
             raise ValueError("input_dim should have length 2 (wid x hei) or "
-                "3 (ch x wid x hei).")
+                f"3 (ch x wid x hei), but has length ({len(self.input_dim)}).")
         self.input_ch = self.input_dim[0]
 
         # convolutional component of the feature extractor
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(in_channels=self.input_ch, out_channels=6, kernel_size=5, stride=1),
+            nn.Conv2d(
+                in_channels=self.input_ch, out_channels=6, kernel_size=5, 
+                stride=1
+                ),
             nn.ReLU(),
             nn.AvgPool2d(kernel_size=2),
             nn.BatchNorm2d(6, affine=False),
@@ -80,7 +104,8 @@ class EncoderCore(nn.Module):
         )
 
         # calculate size of the convolutional feature extractor output
-        self.feat_extr_output_size = 2704 #self._get_feat_extr_output_size(self.input_dim)
+        self.feat_extr_output_size = \
+            self._get_feat_extr_output_size(self.input_dim)
         self.feat_size = feat_size
 
         # linear component of the feature extractor
@@ -111,15 +136,22 @@ class EncoderCore(nn.Module):
         reset_training = self.training
         self.eval()
         with torch.no_grad():   
-            output = self.feature_extractor(dummy_tensor).shape
+            output_dim = self.feature_extractor(dummy_tensor).shape
         if reset_training:
             self.train()
-        return np.product(output)
+        return np.product(output_dim)
 
+    @property
+    def vae(self):
+        return self._vae
+
+    @property
+    def untrained(self):
+        return self._untrained
 
     def forward(self, X):
         if self.untrained and self.training:
-            self.untrained = False
+            self._untrained = False
         feats_extr = self.feature_extractor(X)
         feats_flat = torch.flatten(feats_extr, 1)
         feats_proj = self.linear_projections(feats_flat)
@@ -184,7 +216,10 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         encoder.untrained = True
         linear_input = dataset.dSprites.images[0].size
         if not freeze_features:
-            raise ValueError("freeze_features must be True if no encoder is provided.")
+            raise ValueError(
+                "freeze_features must be set to True if no encoder is "
+                f", but is set to {freeze_features}."
+                )
     else:
         linear_input = encoder.feat_size
     
@@ -194,10 +229,13 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     classifier = nn.Linear(linear_input, dataset.num_classes).to(device)
 
     if dataset.target_latent != "shape":
-        warnings.warn(f"Training a logistic regression on {dataset.target_latent} classification. "
-            f"with {dataset.num_classes} possible target classes.\nIf there is a meaningful linear "
-            "relationship between the different classes, training a linear regression to predict "
-            "latent values continuously would be advisable, instead of using a logistic regression.")
+        warnings.warn(f"Training a logistic regression on "
+            f"{dataset.target_latent} classification with "
+            f"{dataset.num_classes} possible target classes.\nIf there is a "
+            "meaningful linear relationship between the different classes, "
+            "training a linear regression to predict latent values "
+            "continuously would be advisable, instead of using a logistic "
+            "regression.")
 
     # Define datasets and dataloaders
     train_subset_sampler = data.subsample_sampler(
@@ -226,8 +264,8 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     reset_encoder_training = encoder.training
     if not freeze_features:
         encoder.train()
-    elif not encoder.untrained: # otherwise untrained batch norm messes things up
-        encoder.eval() 
+    elif not encoder.untrained: 
+        encoder.eval() # otherwise untrained batch norm messes things up
 
     loss_arr = []
     for _ in tqdm(range(num_epochs)):
@@ -323,11 +361,11 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
       
     Optional args:
     - temperature (float): relaxation temperature. (default: 0.5)
-    - neg_pairs (str or num): If "all", all available negative pairs are used for the loss 
-        calculation. Otherwise, only a certain number or proportion of 
-        the negative pairs available in the batch, as specified by the parameter, 
-        are randomly sampled and included in the calculation, 
-        e.g. 5 for 5 examples or 0.05 for 5% of negative pairs. 
+    - neg_pairs (str or num): If "all", all available negative pairs are used
+        for the loss calculation. Otherwise, only a certain number or 
+        proportion of the negative pairs available in the batch, as specified 
+        by the parameter, are randomly sampled and included in the 
+        calculation, e.g. 5 for 5 examples or 0.05 for 5% of negative pairs. 
         (default: "all")
 
     Returns:
@@ -350,43 +388,53 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
         ) # dim: 2N x 2N
     
     # initialize arrays to identify sets of positive and negative examples
-    positive_sample_indicators = torch.roll(torch.eye(2 * batch_size), batch_size, 1)
-    negative_sample_indicators = torch.ones(2 * batch_size) - torch.eye(2 * batch_size)
+    pos_sample_indicators = \
+        torch.roll(torch.eye(2 * batch_size), batch_size, 1)
+    neg_sample_indicators = \
+        torch.ones(2 * batch_size) - torch.eye(2 * batch_size)
 
     if neg_pairs != "all": 
         # here, positive pairs are NOT included in the negative pairs
         min_val = 1
-        max_val = torch.sum(negative_sample_indicators[0]).item() - 1 # excluding positive pair
-        if neg_pairs < 1:
-            num_retain = int(neg_pairs * len(negative_sample_indicators))
+        max_val = torch.sum(neg_sample_indicators[0]).item() - 1
+        if neg_pairs < 0:
+            raise ValueError(f"Cannot use a negative amount of negative pairs "
+                f"({neg_pairs}).")
+        elif neg_pairs < 1:
+            num_retain = int(neg_pairs * len(neg_sample_indicators))
         else:
             num_retain = int(neg_pairs)
         
         if num_retain < min_val:
             warnings.warn("Increasing the number of negative pairs to use per "
-                f"image in the contrastive loss from {num_retain} to the minimum "
-                f"value of {min_val}.")
+                f"image in the contrastive loss from {num_retain} to the "
+                f"minimum value of {min_val}.")
             num_retain = min_val
         elif num_retain > max_val: # retain all
             num_retain = max_val
 
         # randomly identify the values to retain for each column
-        exclusion_indicators = torch.absolute(1 - negative_sample_indicators) + positive_sample_indicators
-        random_values = torch.rand_like(negative_sample_indicators) + exclusion_indicators * 3
-        retain_bool = (torch.argsort(torch.argsort(random_values, axis=1), axis=1) < num_retain)
+        exclusion_indicators = \
+            torch.absolute(1 - neg_sample_indicators) + pos_sample_indicators
+        random_values = \
+            torch.rand_like(neg_sample_indicators) + \
+                exclusion_indicators * 100
+        retain_bool = (torch.argsort(
+            torch.argsort(random_values, axis=1), axis=1
+            ) < num_retain)
 
-        negative_sample_indicators *= retain_bool
-        if not (torch.sum(negative_sample_indicators, dim=1) == num_retain).all():
-            raise NotImplementedError(f"Implementation error. Not all images shave {num_retain} "
-                "negative pair(s).")
+        neg_sample_indicators *= retain_bool
+        if not (torch.sum(neg_sample_indicators, dim=1) == num_retain).all():
+            raise NotImplementedError("Implementation error. Not all images "
+                f"have been assigned {num_retain} random negative pair(s).")
 
     numerator = torch.sum(
-        torch.exp(similarity_mat / temperature) * positive_sample_indicators.to(device), 
+        torch.exp(similarity_mat / temperature) * pos_sample_indicators.to(device), 
         dim=1
         )
 
     denominator = torch.sum(
-        torch.exp(similarity_mat / temperature) * negative_sample_indicators.to(device), 
+        torch.exp(similarity_mat / temperature) * neg_sample_indicators.to(device), 
         dim=1
         )
     
@@ -398,8 +446,9 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
     return loss
 
 
-def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000, 
-                 neg_pairs="all", use_cuda=True, verbose=False):
+def train_simclr(encoder, dataset, train_sampler, num_epochs=10, 
+                 batch_size=1000, neg_pairs="all", use_cuda=True, 
+                 verbose=False):
     """
     Function to train an encoder using the SimCLR loss.
     
@@ -415,10 +464,10 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
     - batch_size (int): Batch size. (default: 1000)
-    - neg_pairs (str or num): If "all", all available negative pairs are used for 
-        the loss calculation. Otherwise, the number or proportion specified 
-        by the parameter is randomly sampled and used, e.g. 5 for 5 examples or 
-        0.05 for 5% of negative pairs. 
+    - neg_pairs (str or num): If "all", all available negative pairs are used 
+        for the loss calculation. Otherwise, the number or proportion 
+        specified by the parameter is randomly sampled and used, e.g. 5 for 5 
+        examples or 0.05 for 5% of negative pairs. 
         (default: "all")
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
@@ -436,17 +485,21 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
     projector = nn.Identity().to(device)
 
     if not dataset.simclr:
-        raise ValueError("Must pass a simclr torch dataset (i.e., where "
-            "dataset.simclr is True.")
+        raise ValueError(
+            "Must pass a torch dataset for which self.simclr is True."
+            )
 
     train_dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, sampler=train_sampler
         )
 
     # Define loss and optimizers
-    train_parameters = list(encoder.parameters()) + list(projector.parameters())
+    train_parameters = \
+        list(encoder.parameters()) + list(projector.parameters())
     optimizer = torch.optim.Adam(train_parameters, lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500) 
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=500
+        ) 
 
     # Train model on training set
     reset_encoder_training = encoder.training # record for later
@@ -476,9 +529,11 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=10, batch_size=1000
                     stack=True
                     ).cpu().numpy()
 
-                title = f"Features (true / augm.): Epoch {epoch_n} (batch {batch_idx})"
-                sorted_target_values = dataset.dSprites.get_latent_values_from_classes(
-                    sorted_targets, dataset.target_latent
+                title = (f"Features (true / augm.): Epoch {epoch_n} "
+                    f"(batch {batch_idx})")
+                sorted_target_values = \
+                    dataset.dSprites.get_latent_values_from_classes(
+                        sorted_targets, dataset.target_latent
                     ).squeeze()
                 sorted_target_values = np.tile(sorted_target_values, 2)
                 data.plot_dsprites_RSMs(
@@ -512,7 +567,7 @@ class VAE_decoder(nn.Module):
 
         super().__init__()
         self.feat_size = feat_size
-        self.vae = True
+        self._vae = True
         self.output_dim = output_dim
 
         self.decoder_linear = nn.Sequential(
@@ -528,15 +583,22 @@ class VAE_decoder(nn.Module):
         self.decoder_conv = nn.Sequential(
               nn.UpsamplingNearest2d(scale_factor=2),
               nn.BatchNorm2d(16, affine=False),
-              nn.ConvTranspose2d(in_channels=16, out_channels=6, kernel_size=5, stride=1),
+              nn.ConvTranspose2d(
+                  in_channels=16, out_channels=6, kernel_size=5, stride=1
+                  ),
               nn.ReLU(),
               nn.UpsamplingNearest2d(scale_factor=2),
               nn.BatchNorm2d(6, affine=False),
-              nn.ConvTranspose2d(in_channels=6, out_channels=1, kernel_size=5, stride=1)
+              nn.ConvTranspose2d(
+                  in_channels=6, out_channels=1, kernel_size=5, stride=1
+                  )
         )
 
         self._test_output_dim()
 
+    @property
+    def vae(self):
+        return self._vae
 
     def _test_output_dim(self):
         dummy_tensor = torch.ones(1, self.feat_size)
@@ -545,8 +607,9 @@ class VAE_decoder(nn.Module):
         with torch.no_grad():
             decoder_output_shape = self.reconstruct(dummy_tensor).shape[1:]
         if decoder_output_shape != self.output_dim:
-            raise ValueError(f"Decoder produces output of shape {decoder_output_shape} "
-                f"instead of expected {self.output_dim}.")
+            raise ValueError(f"Decoder produces output of shape "
+                f"{decoder_output_shape} instead of expected "
+                f"{self.output_dim}.")
         if reset_training:
             self.train()
 
@@ -582,7 +645,8 @@ def vae_loss_function(recon_X_logits, X, mu, logvar, beta=1.0):
     Returns the weighted VAE loss for the batch.
 
     Required args:
-    - recon_X_logits (4D tensor): logits of the X reconstruction (batch_size x shape of x)
+    - recon_X_logits (4D tensor): logits of the X reconstruction 
+        (batch_size x shape of x)
     - X (4D tensor): X (batch_size x shape of x)
     - mu (2D tensor): mu values (batch_size x number of features)
     - logvar (2D tensor): logvar values (batch_size x number of features)
@@ -639,8 +703,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
     decoder = VAE_decoder(encoder.feat_size, encoder.input_dim).to(device)
 
     if not encoder.vae:
-        raise ValueError("Must pass a VAE Encoder (i.e., where encoder.vae "
-            "is True).")
+        raise ValueError("Must pass encoder for which self.vae is True.")
 
     train_dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, sampler=train_sampler
@@ -649,7 +712,9 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
     # Define loss and optimizers
     train_params = list(encoder.parameters()) + list(decoder.parameters())
     optimizer = torch.optim.Adam(train_params, lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=500
+        )
 
     # Train model on training set
     reset_encoder_training = encoder.training
@@ -683,7 +748,8 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
                 encoder.train()
                 decoder.train()
 
-                title = f"Epoch {epoch}, batch {batch_idx}, loss {loss.item():.2f}"
+                title = (f"Epoch {epoch}, batch {batch_idx}, "
+                    f"loss {loss.item():.2f}")
                 plot_util.plot_dsprite_image_doubles(
                     list(input_imgs), list(output_imgs), "Reconstr.",
                     title=title)
@@ -703,7 +769,8 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=10, batch_size=500,
     return encoder, decoder, loss_arr
 
 
-def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use_cuda=True):
+def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, 
+                             use_cuda=True):
     """
     plot_vae_reconstructions(encoder, decoder, dataset, indices)
 
@@ -723,7 +790,9 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
     if not (encoder.vae and decoder.vae):
-        raise ValueError("encoder and decoder must have self.vae set to True.") 
+        raise ValueError(
+            "Must pass encoder and decoder for which self.vae is True."
+            ) 
 
     reset_encoder_device = get_model_device(encoder) # record for later
     reset_decoder_device = get_model_device(decoder)
@@ -742,7 +811,9 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
 
     with torch.no_grad():
         Xs = dataset[indices][0].to(device)
-        recon_Xs = decoder.reconstruct(encoder.get_features(Xs)).detach().cpu().numpy()
+        recon_Xs = decoder.reconstruct(
+            encoder.get_features(Xs)
+            ).detach().cpu().numpy()
         Xs = Xs.cpu().numpy()
 
     # reset original encoder and decoder states
@@ -754,12 +825,14 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None, use
         decoder.train()  
     decoder.to(reset_decoder_device)
     
-    plot_util.plot_dsprite_image_doubles(list(Xs), list(recon_Xs), "Reconstr.", title=title)
+    plot_util.plot_dsprite_image_doubles(
+        list(Xs), list(recon_Xs), "Reconstr.", title=title
+        )
 
 
 
-def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="shape", 
-                    use_cuda=True):
+def plot_model_RSMs(encoders, dataset, sampler, titles=None, 
+                    sorting_latent="shape", use_cuda=True):
     """
     plot_model_RSMs(encoders, dataset, sampler)
 
@@ -768,14 +841,17 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
     Required args:
     - encoders (list): list of EncoderCore() objects
     - dataset (dSpritesTorchDataset): dSprites torch dataset
-    - sampler (SubsetRandomSampler): Sampler with the indices of images for which to 
-        plot the RSM.
+    - sampler (SubsetRandomSampler): Sampler with the indices of images for 
+        which to plot the RSM.
     
     Optional args:
     - titles (list): title for each RSM. (default: None)
     - sorting_latent (str): name of latent class/feature to sort rows 
         and columns by. (default: "shape")
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    
+    Returns:
+    - encoder_rsms (list): list of RSMs for each encoder
     """
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
@@ -785,7 +861,8 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
         titles = [titles]
     
     if titles is not None and len(encoders) != len(titles):
-        raise ValueError("If providing titles, must provide as many as encoders.")
+        raise ValueError("If providing titles, must provide as many as "
+            f"encoders ({len(encoders)}).")
 
     batch_size = 1000
     n_batches = int(np.ceil(len(sampler.indices) / batch_size))
@@ -801,7 +878,9 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
         all_features = []
         all_latents = []
         for b_idx in range(n_batches):
-            indices = sampler.indices[b_idx * batch_size : (b_idx + 1) * batch_size]
+            indices = sampler.indices[
+                b_idx * batch_size : (b_idx + 1) * batch_size
+                ]
             if dataset.simclr:
                 Xs, _, _ = dataset[indices]
             else:
@@ -831,21 +910,22 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None, sorting_latent="sha
         dataset.dSprites, encoder_rsms, encoder_latents, 
         titles=titles, sorting_latent=sorting_latent
         )
+
+    return encoder_rsms
         
 
 
-def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sampler, 
-                                    labelled_fractions=None, num_epochs=10, 
-                                    freeze_features=True, subset_seed=None, 
-                                    use_cuda=True, encoder_label=None, 
-                                    plot_accuracies=True, ax=None, title=None, 
-                                    plot_chance=True, color="blue", marker=".", 
-                                    verbose=False):
+def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, 
+    test_sampler, labelled_fractions=None, num_epochs=10, freeze_features=True, 
+    subset_seed=None, use_cuda=True, encoder_label=None, plot_accuracies=True, 
+    ax=None, title=None, plot_chance=True, color="blue", marker=".", 
+    verbose=False):
     """
-    train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sampler)
+    train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, 
+        test_sampler)
 
-    Trains classifiers on an encoder, and returns training and test accuracy with
-    different fractions of labelled data. Optionally plots the results.
+    Trains classifiers on an encoder, and returns training and test accuracy     
+    with different fractions of labelled data. Optionally plots the results.
 
     Required args:
      - encoder (nn.Module): Encoder network instance for extracting features. 
@@ -855,8 +935,8 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sample
     - test_sampler (SubsetRandomSampler): Test dataset sampler.
     
     Optional args:
-    - labelled_fractions (list): List of fractions of the total number of available 
-        labelled training data to use for training. If None, the 
+    - labelled_fractions (list): List of fractions of the total number of 
+        available labelled training data to use for training. If None, the 
         DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
@@ -867,19 +947,22 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sample
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - encoder_label (str): Label for the encoder. (default: None)
-    - plot_accuracies (bool): If True, the accuracies are plotted. (default: True)
-    - ax (plt Axis): pyplot axis on which to plot accuracies. If None, a new axis is 
-        initalized. (default: None)
+    - plot_accuracies (bool): If True, the accuracies are plotted. 
+        (default: True)
+    - ax (plt Axis): pyplot axis on which to plot accuracies. If None, a new 
+        axis is initalized. (default: None)
     - title (str): main plot title. (default: None)
-    - plot_chance (bool): if True, chance level classifier accuracy is plotted. 
-        (default: False)
-    - color (str): color to use when plotting the accuracies. (default: "blue")
+    - plot_chance (bool): if True, chance level classifier accuracy is 
+        plotted. (default: False)
+    - color (str): color to use when plotting the accuracies. 
+        (default: "blue")
     - marker (str): marker to use when plotting the accuracies. (default: ".")
     - verbose (bool): If True, classification accuracy is printed. 
         (default: False)
 
     Returns: 
-    - train_acc (1D np array): final training accuracy for each fraction labelled
+    - train_acc (1D np array): final training accuracy for each fraction 
+        labelled
     - test_acc (1D np array): final test accuracy for each fraction labelled
     """
 
@@ -893,13 +976,17 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sample
 
     if labelled_fractions is None:
         labelled_fractions = DEFAULT_LABELLED_FRACTIONS
-        labelled_fraction_str = ", ".join([str(val) for val in labelled_fractions])
+        labelled_fraction_str = ", ".join(
+            [str(val) for val in labelled_fractions]
+            )
         if verbose:
             print("Using the following default labelled fraction values: "
                 f"{labelled_fraction_str}")
 
     if np.min(labelled_fractions) <= 0 or np.max(labelled_fractions) > 1:
-        raise ValueError("labelled_fractions must be between (0, 1) (excl, incl).")
+        raise ValueError(
+            "all labelled_fractions must be between (0, 1) (excl, incl)"
+            )
 
     train_acc = np.zeros(len(labelled_fractions))
     test_acc = np.zeros_like(train_acc)
@@ -914,32 +1001,43 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sample
     if not freeze_features: # retain original
         orig_encoder = copy.deepcopy(encoder)
 
-    for i, labelled_fraction in enumerate(labelled_fractions):
+    for i, labelled_fraction in tqdm(enumerate(labelled_fractions)):
+        show_progress_bars(False)
         if not freeze_features: # obtain new fresh version
             encoder = copy.deepcopy(orig_encoder)
         if verbose:
-            print(f"    using {int(labelled_fraction * 100):.2f}% of available labelled data...")
+            print(f"    using {int(labelled_fraction * 100):.2f}% of "
+                "available labelled data...")
         _,  _, train_acc[i], test_acc[i] = train_classifier(
-            encoder, dataset, train_sampler, test_sampler, num_epochs=num_epochs, 
-            fraction_of_labels=labelled_fraction, freeze_features=freeze_features, 
-            subset_seed=subset_seed, verbose=False
+            encoder, dataset, train_sampler, test_sampler, 
+            num_epochs=num_epochs, fraction_of_labels=labelled_fraction, 
+            freeze_features=freeze_features, subset_seed=subset_seed, 
+            verbose=False
             )
+        show_progress_bars("reset")
 
     if plot_accuracies:
         if ax is None:
             _, ax = plt.subplots(1)
         if plot_chance:
-            ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", alpha=0.7)
+            ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", 
+            alpha=0.7
+            )
     
         if encoder_label is None:
             encoder_label = ""
         else:
             encoder_label = f"{encoder_label}{freeze_str} - "
 
-        ax.plot(labelled_fractions, train_acc, ls="dashed", label=f"{encoder_label}training", 
-            color=color, marker=marker, markersize=10, alpha=0.6)
-        ax.plot(labelled_fractions, test_acc, lw=3, label=f"{encoder_label}test", 
-            color=color, marker=marker, markersize=10, alpha=0.8)
+        ax.plot(
+            labelled_fractions, train_acc, ls="dashed", 
+            label=f"{encoder_label}training", color=color, marker=marker, 
+            markersize=10, alpha=0.6
+            )
+        ax.plot(
+            labelled_fractions, test_acc, lw=3, label=f"{encoder_label}test", 
+            color=color, marker=marker, markersize=10, alpha=0.8
+            )
 
         ax.set_xlabel("Fraction of labelled data used")
         ax.set_ylabel("Classification accuracy (%)")
@@ -957,60 +1055,65 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, test_sample
     return train_acc, test_acc
 
 
-def train_encoder_clfs_by_fraction_labelled(encoders, dataset, train_sampler, test_sampler, 
-                                            labelled_fractions=None, num_epochs=10, 
-                                            freeze_features=True, subset_seed=None, 
-                                            use_cuda=True, encoder_labels=None, 
-                                            plot_accuracies=True, title=None, verbose=False):
+def train_encoder_clfs_by_fraction_labelled(
+    encoders, dataset, train_sampler, test_sampler, labelled_fractions=None, 
+    num_epochs=10, freeze_features=True, subset_seed=None, use_cuda=True, 
+    encoder_labels=None, plot_accuracies=True, title=None, verbose=False):
 
     """
-    train_encoder_clfs_by_fraction_labelled(encoder, train_sampler, test_sampler)
+    train_encoder_clfs_by_fraction_labelled(encoder, train_sampler, 
+        test_sampler)
 
-    Trains classifiers on encoders, and returns training and test accuracy with
-    different fractions of labelled data. Optionally plots the results.
+    Trains classifiers on encoders, and returns training and test accuracy 
+    with different fractions of labelled data. Optionally plots the results.
 
     Required args:
-     - encoders (list): List of encoder network instances for extracting features. 
-        Should have method get_features().
+     - encoders (list): List of encoder network instances for extracting 
+        features. 
     - dataset (dSpritesTorchDataset): dSprites torch dataset.
     - train_sampler (SubsetRandomSampler): Training dataset sampler.
     - test_sampler (SubsetRandomSampler): Test dataset sampler.
     
     Optional args:
-    - labelled_fractions (list): List of fractions of the total number of available 
-        labelled training data to use for training. If None, the 
+    - labelled_fractions (list): List of fractions of the total number of 
+        available labelled training data to use for training. If None, the 
         DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
     - num_epochs (int): Number of epochs over which to train the classifier. 
         (default: 10)
-    - freeze_features (bool or list): If True, the feature encoder is frozen and only 
-        the classifier is trained. If False, the encoder is also trained. A list can 
-        be provided if the value is different from encoder to encoder. 
-        (default: True)
+    - freeze_features (bool or list): If True, the feature encoder is frozen 
+        and only the classifier is trained. If False, the encoder is also 
+        trained. A list can be provided if the value is different from encoder 
+        to encoder. (default: True)
     - subset_seed (int): seed for selecting data subset, if applicable 
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     - encoder_label (str): Label for the encoder. (default: None)
-    - plot_accuracies (bool): If True, the accuracies are plotted. (default: True)
+    - plot_accuracies (bool): If True, the accuracies are plotted. 
+        (default: True)
     - title (str): main plot title. (default: None)
     - verbose (bool): If True, classification accuracy is printed. 
         (default: False)
 
     Returns: 
-    - train_accs (2D np array): final training accuracies for each encoder x fraction labelled
-    - test_accs (2D np array): final test accuracies for each encoder x fraction labelled
+    - train_accs (2D np array): final training accuracies for each 
+        encoder x fraction labelled
+    - test_accs (2D np array): final test accuracies for each 
+        encoder x fraction labelled
     if plot_accuracies:
     - ax (plt Axis): pyplot axis on which the accuracies are plotted
     """
 
-    colors = ["blue", "brown", "green", "red", "purple", "black", "orange"] # 7
-    markers = ["o", "^", "P", "d", "X", "p", "*"]
+    colors = ["blue", "brown", "green", "red", "purple", "black", "orange"] 
+    markers = ["o", "^", "P", "d", "X", "p", "*"] # 7
     if len(colors) != len(markers):
         raise NotImplementedError(
-            "Implementation error: there should be as many preset colors as markers."
+            "Implementation error: there should be as many preset colors "
+            f"({len(colors)}) as markers ({len(markers)})."
             )
     if len(colors) < len(encoders):
         raise NotImplementedError(
-            f"Too may encoders for the number of preset colors {len(colors)}."
+            f"Too may encoders ({len(encoders)}) for the number of "
+            f"preset colors ({len(colors)})."
             )
 
     if isinstance(labelled_fractions, (int, float)):
@@ -1018,30 +1121,35 @@ def train_encoder_clfs_by_fraction_labelled(encoders, dataset, train_sampler, te
 
     if labelled_fractions is None:
         labelled_fractions = DEFAULT_LABELLED_FRACTIONS
-        labelled_fraction_str = ", ".join([str(val) for val in labelled_fractions])
-        print("Using the following default labelled fraction values: "
-          f"{labelled_fraction_str}")
+        labelled_fraction_str = ", ".join(
+            [str(val) for val in labelled_fractions]
+            )
+        if verbose:
+            print("Using the following default labelled fraction values: "
+            f"{labelled_fraction_str}")
 
 
     if isinstance(freeze_features, list):
         if len(freeze_features) != len(encoders):
-            raise ValueError("If providing freeze_features as a list, must provide as "
-                "many as the number of encoders.")
+            raise ValueError("If providing freeze_features as a list, must "
+                "provide as many as the number of encoders.")
     else:
         freeze_features = [freeze_features] * len(encoders)
 
-
     if isinstance(encoder_labels, list):
         if len(encoder_labels) != len(encoders):
-            raise ValueError("If providing encoder_labels, must provide as many as the "
-                "number of encoders.")
+            raise ValueError("If providing encoder_labels, must provide as "
+                "many as the number of encoders.")
     else:
         encoder_labels = [None] * len(encoders)
 
     ax = None
     if plot_accuracies:
         _, ax = plt.subplots(1)
-        ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", alpha=0.7, lw=3)
+        ax.axhline(
+            y=100 / dataset.num_classes, ls="dashed", color="gray", 
+            alpha=0.7, lw=3
+            )
         if title is not None:
             ax.set_title(title)
         
@@ -1052,9 +1160,10 @@ def train_encoder_clfs_by_fraction_labelled(encoders, dataset, train_sampler, te
         train_accs[e], test_accs[e] = train_clfs_by_fraction_labelled(
             encoder, dataset, train_sampler, test_sampler, 
             labelled_fractions=labelled_fractions, num_epochs=num_epochs, 
-            freeze_features=freeze_features[e], subset_seed=subset_seed, use_cuda=use_cuda, 
-            encoder_label=encoder_labels[e], plot_accuracies=plot_accuracies, ax=ax, 
-            plot_chance=False, color=colors[e], marker=markers[e], verbose=verbose
+            freeze_features=freeze_features[e], subset_seed=subset_seed, 
+            use_cuda=use_cuda, encoder_label=encoder_labels[e], 
+            plot_accuracies=plot_accuracies, ax=ax, plot_chance=False, 
+            color=colors[e], marker=markers[e], verbose=verbose
             )
     
     if plot_accuracies:
