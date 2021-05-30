@@ -144,7 +144,7 @@ def plot_RSMs(rsms, titles=None):
     min_val = np.min([rsm.min() for rsm in rsms])
     max_val = np.max([rsm.max() for rsm in rsms])
     ncols = len(rsms)
-    wid = 6
+    wid = 5
 
     fig, axes = plt.subplots(
         ncols=ncols, figsize=[ncols * wid, wid], squeeze=False

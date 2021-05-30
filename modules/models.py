@@ -173,7 +173,7 @@ class EncoderCore(nn.Module):
 def train_classifier(encoder, dataset, train_sampler, test_sampler, 
                      num_epochs=10, fraction_of_labels=1.0, batch_size=1000, 
                      freeze_features=True, subset_seed=None, use_cuda=True, 
-                     verbose=False):
+                     progress_bar=True, verbose=False):
     """
     train_classifier(encoder, dataset, train_sampler, test_sampler)
 
@@ -198,6 +198,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
     - subset_seed (int): seed for selecting data subset, if applicable 
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - progress_bar (bool): If True, progress bars are enabled. (default: True)
     - verbose (bool): If True, classification accuracy is printed. 
         (default: False)
 
@@ -268,7 +269,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         encoder.eval() # otherwise untrained batch norm messes things up
 
     loss_arr = []
-    for _ in tqdm(range(num_epochs)):
+    for _ in tqdm(range(num_epochs), disable=not(progress_bar)):
         total_loss = 0
         num_total = 0
         for iter_data in train_dataloader:
@@ -981,7 +982,7 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             )
         if verbose:
             print("Using the following default labelled fraction values: "
-                f"{labelled_fraction_str}")
+                f"{labelled_fraction_str}\n")
 
     if np.min(labelled_fractions) <= 0 or np.max(labelled_fractions) > 1:
         raise ValueError(
@@ -996,23 +997,21 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
     if verbose and encoder_label is not None:
         add_str = "" if freeze_features else " and encoders"
         print(f"{encoder_label[0].capitalize()}{encoder_label[1:]} "
-            f"encoder - training classifiers{add_str}{freeze_str}")
+            f"encoder: training classifiers{add_str}{freeze_str}...")
 
     if not freeze_features: # retain original
         orig_encoder = copy.deepcopy(encoder)
 
     n_fractions = len(labelled_fractions)
     for i in tqdm(range(n_fractions)):
-        show_progress_bars(False)
         if not freeze_features: # obtain new fresh version
             encoder = copy.deepcopy(orig_encoder)
         _,  _, train_acc[i], test_acc[i] = train_classifier(
             encoder, dataset, train_sampler, test_sampler, 
             num_epochs=num_epochs, fraction_of_labels=labelled_fractions[i], 
             freeze_features=freeze_features, subset_seed=subset_seed, 
-            verbose=False
+            progress_bar=False, verbose=False
             )
-        show_progress_bars("reset")
 
     if plot_accuracies:
         if ax is None:
@@ -1022,27 +1021,32 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             alpha=0.7
             )
     
-        if encoder_label is None:
-            encoder_label = ""
+        if encoder_label is not None:
+            training_label = f"{encoder_label}{freeze_str} (training)"
+            test_label = f"{encoder_label}{freeze_str} (test)"
         else:
-            encoder_label = f"{encoder_label}{freeze_str} - "
+            training_label = "training"
+            test_label = "test"
 
         ax.plot(
             labelled_fractions, train_acc, ls="dashed", 
-            label=f"{encoder_label}training", color=color, marker=marker, 
-            markersize=10, alpha=0.6
+            label=training_label, color=color, marker=marker, markersize=8, 
+            alpha=0.4
             )
         ax.plot(
-            labelled_fractions, test_acc, lw=3, label=f"{encoder_label}test", 
-            color=color, marker=marker, markersize=10, alpha=0.8
+            labelled_fractions, test_acc, lw=3, label=test_label, 
+            color=color, marker=marker, markersize=8, alpha=0.8
             )
 
-        ax.set_xlabel("Fraction of labelled data used")
+        ax.set_xlabel("Fraction of labelled data used (log scale)")
         ax.set_ylabel("Classification accuracy (%)")
         ax.legend()
 
         from matplotlib.ticker import ScalarFormatter
         ax.set_xscale("log")
+        ax.set_xticks(labelled_fractions)
+        if len(labelled_fractions) < 8:
+            ax.set_xticklabels(labelled_fractions)
         ax.xaxis.set_major_formatter(ScalarFormatter())
 
         if title is not None:
@@ -1076,8 +1080,8 @@ def train_encoder_clfs_by_fraction_labelled(
     - labelled_fractions (list): List of fractions of the total number of 
         available labelled training data to use for training. If None, the 
         DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
-    - num_epochs (int): Number of epochs over which to train the classifier. 
-        (default: 10)
+    - num_epochs (int or list): Number of epochs over which to train the 
+        classifiers for each encoder. (default: 10)
     - freeze_features (bool or list): If True, the feature encoder is frozen 
         and only the classifier is trained. If False, the encoder is also 
         trained. A list can be provided if the value is different from encoder 
@@ -1114,6 +1118,14 @@ def train_encoder_clfs_by_fraction_labelled(
             f"preset colors ({len(colors)})."
             )
 
+    if isinstance(num_epochs, list):
+        if len(num_epochs) != len(encoders):
+            raise ValueError("If providing num_epochs as a list, must "
+                "provide as many as the number of encoders.")
+    else:
+        num_epochs = [num_epochs] * len(encoders)
+
+
     if isinstance(labelled_fractions, (int, float)):
         labelled_fractions = [labelled_fractions]
 
@@ -1124,7 +1136,7 @@ def train_encoder_clfs_by_fraction_labelled(
             )
         if verbose:
             print("Using the following default labelled fraction values: "
-            f"{labelled_fraction_str}")
+            f"{labelled_fraction_str}\n")
 
 
     if isinstance(freeze_features, list):
@@ -1143,7 +1155,7 @@ def train_encoder_clfs_by_fraction_labelled(
 
     ax = None
     if plot_accuracies:
-        _, ax = plt.subplots(1)
+        _, ax = plt.subplots(1, figsize=[9, 6])
         ax.axhline(
             y=100 / dataset.num_classes, ls="dashed", color="gray", 
             alpha=0.7, lw=3
@@ -1157,7 +1169,7 @@ def train_encoder_clfs_by_fraction_labelled(
     for e, encoder in enumerate(encoders):
         train_accs[e], test_accs[e] = train_clfs_by_fraction_labelled(
             encoder, dataset, train_sampler, test_sampler, 
-            labelled_fractions=labelled_fractions, num_epochs=num_epochs, 
+            labelled_fractions=labelled_fractions, num_epochs=num_epochs[e], 
             freeze_features=freeze_features[e], subset_seed=subset_seed, 
             use_cuda=use_cuda, encoder_label=encoder_labels[e], 
             plot_accuracies=plot_accuracies, ax=ax, plot_chance=False, 
