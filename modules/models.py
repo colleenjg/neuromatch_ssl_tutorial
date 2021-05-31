@@ -939,7 +939,9 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
     - labelled_fractions (list): List of fractions of the total number of 
         available labelled training data to use for training. If None, the 
         DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
-    - num_epochs (int): Number of epochs over which to train the classifier. 
+    - num_epochs (int):Number of epochs over which to train the 
+        classifiers, if full dataset is used (the number used is scaled 
+        proportionally for each fraction). 
         (default: 10)
     - freeze_features (bool): If True, the feature encoder is frozen and only 
         the classifier is trained. If False, the encoder is also trained. 
@@ -1004,11 +1006,12 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
 
     n_fractions = len(labelled_fractions)
     for i in tqdm(range(n_fractions)):
+        n_epochs_use = int(np.ceil(num_epochs / labelled_fractions[i]))
         if not freeze_features: # obtain new fresh version
             encoder = copy.deepcopy(orig_encoder)
         _,  _, train_acc[i], test_acc[i] = train_classifier(
             encoder, dataset, train_sampler, test_sampler, 
-            num_epochs=num_epochs, fraction_of_labels=labelled_fractions[i], 
+            num_epochs=n_epochs_use, fraction_of_labels=labelled_fractions[i], 
             freeze_features=freeze_features, subset_seed=subset_seed, 
             progress_bar=False, verbose=False
             )
@@ -1070,7 +1073,7 @@ def train_encoder_clfs_by_fraction_labelled(
     with different fractions of labelled data. Optionally plots the results.
 
     Required args:
-     - encoders (list): List of encoder network instances for extracting 
+    - encoders (list): List of encoder network instances for extracting 
         features. 
     - dataset (dSpritesTorchDataset): dSprites torch dataset.
     - train_sampler (SubsetRandomSampler): Training dataset sampler.
@@ -1081,7 +1084,8 @@ def train_encoder_clfs_by_fraction_labelled(
         available labelled training data to use for training. If None, the 
         DEFAULT_LABELLED_FRACTIONS global variable is used. (default: None)
     - num_epochs (int or list): Number of epochs over which to train the 
-        classifiers for each encoder. (default: 10)
+        classifiers for each encoder, if full dataset is used (the number 
+        used is scaled proportionally for each fraction). (default: 10)
     - freeze_features (bool or list): If True, the feature encoder is frozen 
         and only the classifier is trained. If False, the encoder is also 
         trained. A list can be provided if the value is different from encoder 
