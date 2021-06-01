@@ -141,8 +141,9 @@ def plot_RSMs(rsms, titles=None):
         raise ValueError("If providing titles, must provide as many "
             "as the number of RSMs.")
 
-    min_val = np.min([rsm.min() for rsm in rsms])
-    max_val = np.max([rsm.max() for rsm in rsms])
+    min_val = np.min([rsm.min() for rsm in rsms] + [-1])
+    max_val = np.max([rsm.max() for rsm in rsms] + [1])
+
     ncols = len(rsms)
     wid = 5
 

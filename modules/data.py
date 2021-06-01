@@ -155,7 +155,7 @@ def train_test_split_idx(dataset, fraction_train=0.8, randst=None,
     - test_indices (SubsetRandomSampler): test dataset sampler (unseeded)
     """
 
-    if not isinstance(dataset, dSpritesTorchDataset):
+    if not hasattr(dataset, "dSprites"):
         raise ValueError("Expected dataset to be of type "
             f"dSpritesTorchDataset, but found {type(dataset)}.")
 
