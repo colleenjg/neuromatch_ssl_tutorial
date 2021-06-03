@@ -736,7 +736,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=100, batch_size=500,
             num_total += len(recon_X_logits)
             loss.backward()
             optimizer.step()
-            if verbose and epoch % 10 == 9 and batch_idx == 1:
+            if verbose and epoch % 10 == 9 and batch_idx == 0:
                 num_images = 5
                 encoder.eval()
                 decoder.eval()
@@ -810,7 +810,7 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None,
     decoder.eval()
 
     with torch.no_grad():
-        Xs = dataset[indices][0].to(device)
+        Xs = dataset[indices][0].to(device) 
         recon_Xs = decoder.reconstruct(
             encoder.get_features(Xs)
             ).detach().cpu().numpy()
@@ -864,8 +864,12 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         raise ValueError("If providing titles, must provide as many as "
             f"encoders ({len(encoders)}).")
 
-    batch_size = 1000
-    n_batches = int(np.ceil(len(sampler.indices) / batch_size))
+    prev_return_indices = dataset.return_indices()
+    dataset.return_indices(True) # temporarily have the dataset return indices
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=100, sampler=sampler
+        )
 
     encoder_rsms = []
     encoder_latents = []
@@ -877,14 +881,10 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         encoder = encoder.to(device)
         all_features = []
         all_latents = []
-        for b_idx in range(n_batches):
-            indices = sampler.indices[
-                b_idx * batch_size : (b_idx + 1) * batch_size
-                ]
-            if dataset.simclr:
-                Xs, _, _ = dataset[indices]
-            else:
-                Xs, _ = dataset[indices]
+        for outs in dataloader:
+            Xs = outs[0]
+            indices = outs[-1]
+
             with torch.no_grad():
                 features = encoder.get_features(Xs.to(device))
             all_features.append(features)
@@ -905,6 +905,8 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         else:
             encoder.eval()
         encoder.to(reset_encoder_device)
+
+    dataset.return_indices(prev_return_indices) # revert setting
 
     data.plot_dsprites_RSMs(
         dataset.dSprites, encoder_rsms, encoder_latents, 

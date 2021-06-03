@@ -1,6 +1,5 @@
 import os
 
-from matplotlib import pyplot as plt
 import numpy as np
 from PIL import Image
 import torch
@@ -569,6 +568,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
         self.dSprites = dSprites
         self.target_latent = target_latent
+        self._return_indices = False
 
         self.X = self.dSprites.images
         self.y = self.dSprites.get_latent_classes(
@@ -592,10 +592,9 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         if self.simclr:
             self.spijk = spijk
             if self.spijk is not None:
-                rgb_expand = False
-                resize = None
                 torchvision_transforms = False
-                
+                if len(self.X[0].shape) == 2:
+                    rgb_expand = True
                 if self.spijk not in ["train", "test"]:
                     raise ValueError("spijk must be 'train' or 'test', but "
                         f"found {self.spijk}.")
@@ -629,8 +628,8 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 f" has {len(self.X[0].shape)} dimensions."
                 )
 
-        self.ch_expand = False
-        if len(self.X[0].shape) == 2 and not (self.rgb_expand or self.spijk):
+        self._ch_expand = False
+        if len(self.X[0].shape) == 2 and not self.rgb_expand:
             self._ch_expand = True
 
         self.num_samples = len(self.X)
@@ -654,7 +653,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 X = self.resize_transform(X)
 
             if self.rgb_expand:
-                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=0)
+                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=-3)
 
             if self._ch_expand:
                 X = np.expand_dims(X, axis=-3)
@@ -662,13 +661,22 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         y = torch.tensor(y)
 
         if self.simclr:
-            X = torch.tensor(X)
-            X_aug = self.simclr_transforms(X)
-            return X, X_aug, y
+            if self.spijk:
+                X_aug = self.simclr_transforms(X)
+                X = self.simclr_transforms(X) # do this second
+            else:
+                X = torch.tensor(X)
+                X_aug = self.simclr_transforms(X)
+            returns = (X, X_aug, y)
 
         else:
             X = torch.tensor(X)
-            return X, y
+            returns = (X, y)
+
+        if self.return_indices:
+            returns = (X, y) + (idx, )
+
+        return returns
 
 
     def _preprocess_simclr_spijk(self, X):
@@ -684,27 +692,48 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
             All values expected to be between 0 and 1.
         
         Returns:
-        - X (3D np array): image array (height x width x channels).
+        - X (3 or 4D np array): image array 
+                                ((images) x height x width x channels).
         """
 
-        if len(X.shape) == 2:
-            X = np.repeat(np.expand_dims(X, axis=-1), 3, axis=-1)    
-        elif len(X.shape) == 3:
-            X = np.transpose(X, [1, 2, 0]) # place channels last
-        else:
-            raise ValueError(
-                "Expected X to have 2 or 3 dimensions for SimCLR "
-                f"transform, but it has {len(X.shape)} dimensions."
-                )
+    
+        if self.rgb_expand:
+            X = np.repeat(np.expand_dims(X, axis=-1), 3, axis=-1)
         
-        if X.max() >= 1 or X.min() <= 0:
+        if self._ch_expand:
+            X = np.expand_dims(X, axis=-1)
+
+        if X.max() > 1 or X.min() < 0:
             raise NotImplementedError(
                 "Expected X to be between 0 and 1 for SimCLR transform."
                 )
 
-        X = Image.fromarray(np.uint8(X * 255)).convert("RGB")
+        if len(X.shape) == 4:
+            raise NotImplementedError(
+                "Slicing dataset with multiple index values at once not "
+                "supported, due to use of PIL torchvision transforms."
+                )
+
+        X = torchvision.transforms.ToPILImage(mode="RGB")(np.int8(X))
 
         return X
+
+
+    def return_indices(self, return_idx=None):
+        """
+        self.return_indices()
+
+        Allows dataset to return indices when using __getitem__() method.
+        """
+
+        if return_idx is not None:
+            if not isinstance(return_idx, bool):
+                raise ValueError(
+                    "If not None, return_idx must be a boolean, but found "
+                    f"{type(return_idx)}"
+                    )
+            self._return_indices = return_idx
+        return self._return_indices
 
 
     def show_images(self, indices=None, num_images=10, ncols=5, randst=None):

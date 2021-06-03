@@ -1,6 +1,7 @@
 import os
 
 import torch
+import torch.nn as nn
 import torchvision
 
 from . import models
@@ -140,95 +141,155 @@ def load_vae_decoder(save_direc, verbose=True):
     return decoder
 
 
-# class ResNet18Classifier(torchvision.models.resnet.ResNet):
+class ResNet18_with_encoder(torchvision.models.resnet.ResNet):
+    """
+    ResNet18_with_encoder()
 
-#     def __init__(self, num_outputs=1, pretrained=True, freeze_encoder=True):
+    torchvision ResNet18 with explicitly defined encoder attribute, and 
+    get_features() method.
+
+    Optional args:
+    - pretrained (bool): If True, the model is pretrained. (default: True)
+    """
+    
+    def __init__(self, pretrained=True):
+
+        self._untrained = not(pretrained)
+
+        resnet18 = torchvision.models.resnet18(
+            pretrained=pretrained, progress=False
+            )
+        self.__dict__.update(resnet18.__dict__)
         
-#         self.super().__init__()
+        self.pretrained = pretrained
 
-#         resnet18 = torchvision.models.resnet18(pretrained=pretrained, progress=False)
-#         self.__dict__.update(resnet18.__dict__)
+        self._define_encoder()
+
+    @property
+    def untrained(self):
+        return self._untrained
+
+    @property
+    def vae(self):
+        return False
+
+    def _define_encoder(self):
+        # first 8
+        self.encoder = nn.Sequential(
+            self.conv1,
+            self.bn1,
+            self.relu,
+            self.maxpool,
+            self.layer1,
+            self.layer2,
+            self.layer3,
+            self.layer4,
+        )
+
+    def get_features(self, X):
+        with torch.no_grad():
+            feats = self.encoder(X)
+        return feats
+
+    def forward(self, *args, **kwargs):
+        self._untrained = False
+        super().forward(*args, **kwargs)
+
+
+class VGG16_with_encoder(torchvision.models.vgg.VGG):
+    """
+    VGG16_with_encoder()
+
+    torchvision VGG16 with explicitly defined encoder attribute, and 
+    get_features() method.
+
+    Optional args:
+    - pretrained (bool): If True, the model is pretrained. (default: True)
+    """
+
+    def __init__(self, pretrained=True):
+
+        self._untrained = not(pretrained)
+
+        vgg16 = torchvision.models.vgg16(
+            pretrained=pretrained, progress=False
+            )
+        self.__dict__.update(vgg16.__dict__)
         
-#         self.pretrained = pretrained
+        self.pretrained = pretrained
 
-#         self._define_encoder()
-#         self.classifier = nn.Sequential(
-#             init_logreg_classifier(self.num_encoder_outputs, num_outputs)
-#             )
+        self._define_encoder()
 
-#         if freeze_encoder:
-#             self.freeze_encoder()
+    @property
+    def untrained(self):
+        return self._untrained
 
+    @property
+    def vae(self):
+        return False
 
-# def load_vgg_classifier(target_feature="shape", pretrained=True):
-#     if pretrained:
-#         vgg16 = copy.deepcopy(VGG_PRETRAINED)
-#     else:
-#         vgg16 = copy.deepcopy(VGG_UNTRAINED)
-#     # set gradients to 0
-#     for param in vgg16.features.parameters():
-#         param.requires_grad = False
-    
-#     num_features = list(vgg16.classifier.children())[0].in_features
-#     num_outputs = DSPRITES_DICT["latent_num_possible_values"][target_feature]
-#     features = [torch.nn.Linear(num_features, num_outputs)]
-#     vgg16.classifier = torch.nn.Sequential(*features)
+    def _define_encoder(self):
+        self.encoder = self.features
 
-#     return vgg16
+    def get_features(self, X):
+        with torch.no_grad():
+            feats = self.encoder(X)
+        return feats
+
+    def forward(self, *args, **kwargs):
+        self._untrained = False
+        super().forward(*args, **kwargs)
 
 
-# def load_v_ae_classifier(target_feature="shape", model_type="vae"):
-#     if model_type == "vae":
-#         model = copy.deepcopy(VAE)
-#     elif model_type == "ae":
-#         model = copy.deepcopy(AE)
-#     else:
-#         raise ValueError("model_type must be either 'vae' or 'ae'.")
-#     # set gradients to 0
-#     for param in model.features.parameters():
-#         param.requires_grad = False
-    
-#     num_features = list(model.features.children())[-1].out_features
-#     num_outputs = DSPRITES_DICT["latent_num_possible_values"][target_feature]
-#     features = [torch.nn.Linear(num_features, num_outputs)]
-#     model.classifier = torch.nn.Sequential(*features)
-#     model.forward = model.forward_clf
+class SimCLR_spijk_with_encoder(nn.Module):
+    """
+    SimCLR_spijk_with_encoder()
 
-#     return model
+    SimCLR implementation from https://github.com/Spijkervet/SimCLR, with 
+    explicitly defined get_features() method.
 
-# def load_simclr_classifier(target_feature="shape"):
+    Optional args:
+    - pretrained (bool): If True, the model is pretrained. (default: True)
+    """
 
-#     simclr = copy.deepcopy(SIMCLR)
-#     # set gradients to 0
-#     for param in simclr.encoder.parameters():
-#         param.requires_grad = False
-    
-#     simclr.projector # replace with classifier
+    def __init__(self, pretrained=True):
+        
+        self.projection_dim = 64
+        self._untrained = not(pretrained)
 
-#     simclr.features = simclr.encoder # create aliases
+        import simclr
 
-#     num_features = list(simclr.projector.children())[0].in_features
-#     num_outputs = DSPRITES_DICT["latent_num_possible_values"][target_feature]
-#     features = [torch.nn.Linear(num_features, num_outputs)]
-#     simclr.classifier = torch.nn.Sequential(*features)
-#     simclr.projector = simclr.classifier
+        encoder = simclr.modules.get_resnet("resnet18", pretrained=pretrained)
+        simclr_model = simclr.SimCLR(
+            encoder, self.projection_dim, encoder.fc.in_features
+            )
+        self.__dict__.update(simclr_model.__dict__)
 
-#     return simclr
+        self.pretrained = pretrained
 
-# def load_pretrained_SimCLR():
-#     import os
-#     if not os.path.exists("SimCLR"):
-#         !git clone https://github.com/spijkervet/SimCLR.git --quiet
-#         !wget -o SimCLR/simclr_model.tar https://github.com/Spijkervet/SimCLR/releases/download/1.1/checkpoint_100.tar --quiet
-#         !python3 -m pip install SimCLR --quiet
+        if self.pretrained:
+            src = ("https://github.com/Spijkervet/SimCLR/releases/download/"
+                "1.1/checkpoint_100.tar")
 
-#     from simclr import SimCLR
-#     from simclr.modules import get_resnet
-#     from simclr.modules.transformations import TransformsSimCLR
+            state_dict = torch.hub.load_state_dict_from_url(
+                src, progress=False, map_location="cpu"
+                )
 
-#     encoder = get_resnet("resnet18", pretrained=False)
-#     n_features = encoder.fc.in_features
-#     SIMCLR = SimCLR(encoder, 64, n_features)
-#     _ = SIMCLR.load_state_dict(torch.load("checkpoint_100.tar", map_location=torch.device(DEVICE)))
+            self.load_state_dict(state_dict)
 
-#     return SIMCLR
+    @property
+    def untrained(self):
+        return self._untrained
+
+    @property
+    def vae(self):
+        return False
+
+    def get_features(self, X):
+        with torch.no_grad():
+            feats = self.encoder(X)
+        return feats
+
+    def forward(self, *args, **kwargs):
+        self._untrained = False
+        super().forward(*args, **kwargs)

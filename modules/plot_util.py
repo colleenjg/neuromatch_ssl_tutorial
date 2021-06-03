@@ -92,9 +92,10 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5,
             )
 
     fig, axes = plot_dsprites_images(plot_images, ncols=ncols)
+    fig.tight_layout()
     if title is not None:
         fig.suptitle(title, y=1.04)
-    
+
     x_left = axes[0, 0].get_position().x0
     x_right = axes[-1, -1].get_position().x1
     x_ext = (x_right - x_left) / 30
@@ -112,7 +113,7 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5,
                 transform=fig.transFigure, color="black"
                 )
             fig.add_artist(line)
-    
+
     return fig, axes
 
 
