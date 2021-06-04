@@ -809,12 +809,18 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None,
     encoder.eval()
     decoder.eval()
 
-    with torch.no_grad():
-        Xs = dataset[indices][0].to(device) 
-        recon_Xs = decoder.reconstruct(
-            encoder.get_features(Xs)
-            ).detach().cpu().numpy()
-        Xs = Xs.cpu().numpy()
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=1000, sampler=indices
+        )
+
+    Xs, recon_Xs = [], []
+    for X, _ in dataloader:
+        with torch.no_grad():
+            recon_X = decoder.reconstruct(
+                encoder.get_features(X.to(device))
+                ).detach()
+            Xs.extend(list(X.cpu().numpy()))
+            recon_Xs.extend(list(recon_X.cpu().numpy()))
 
     # reset original encoder and decoder states
     if reset_encoder_training:
@@ -832,7 +838,7 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None,
 
 
 def plot_model_RSMs(encoders, dataset, sampler, titles=None, 
-                    sorting_latent="shape", use_cuda=True):
+                    sorting_latent="shape", batch_size=1000, use_cuda=True):
     """
     plot_model_RSMs(encoders, dataset, sampler)
 
@@ -848,6 +854,7 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
     - titles (list): title for each RSM. (default: None)
     - sorting_latent (str): name of latent class/feature to sort rows 
         and columns by. (default: "shape")
+    - batch_size (int): Batch size. (default: 1000)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     
     Returns:
@@ -865,13 +872,10 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
             f"encoders ({len(encoders)}).")
 
     prev_return_indices = dataset.return_indices()
-    dataset.return_indices(True) # temporarily have the dataset return indices
-
-    # import pdb
-    # pdb.set_trace()
+    dataset.return_indices(True) # temporarily have the dataset return indices too
 
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=100, sampler=sampler
+        dataset, batch_size=batch_size, sampler=sampler
         )
 
     encoder_rsms = []
@@ -923,9 +927,9 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
 
 def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, 
     test_sampler, labelled_fractions=None, num_epochs=10, freeze_features=True, 
-    subset_seed=None, use_cuda=True, encoder_label=None, plot_accuracies=True, 
-    ax=None, title=None, plot_chance=True, color="blue", marker=".", 
-    verbose=False):
+    batch_size=1000, subset_seed=None, use_cuda=True, encoder_label=None, 
+    plot_accuracies=True, ax=None, title=None, plot_chance=True, color="blue", 
+    marker=".", verbose=False):
     """
     train_clfs_by_fraction_labelled(encoder, dataset, train_sampler, 
         test_sampler)
@@ -951,6 +955,7 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
     - freeze_features (bool): If True, the feature encoder is frozen and only 
         the classifier is trained. If False, the encoder is also trained. 
         (default: True)
+    - batch_size (int): Batch size. (default: 1000)
     - subset_seed (int): seed for selecting data subset, if applicable 
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
@@ -1021,7 +1026,7 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             num_epochs=num_epochs_use, 
             fraction_of_labels=labelled_fractions[i], 
             freeze_features=freeze_features, subset_seed=subset_seed, 
-            progress_bar=False, verbose=False
+            batch_size=batch_size, progress_bar=False, verbose=False
             )
 
     if plot_accuracies:
@@ -1070,8 +1075,9 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
 
 def train_encoder_clfs_by_fraction_labelled(
     encoders, dataset, train_sampler, test_sampler, labelled_fractions=None, 
-    num_epochs=10, freeze_features=True, subset_seed=None, use_cuda=True, 
-    encoder_labels=None, plot_accuracies=True, title=None, verbose=False):
+    num_epochs=10, freeze_features=True, batch_size=1000, subset_seed=None, 
+    use_cuda=True, encoder_labels=None, plot_accuracies=True, title=None, 
+    verbose=False):
 
     """
     train_encoder_clfs_by_fraction_labelled(encoder, train_sampler, 
@@ -1098,6 +1104,7 @@ def train_encoder_clfs_by_fraction_labelled(
         and only the classifier is trained. If False, the encoder is also 
         trained. A list can be provided if the value is different from encoder 
         to encoder. (default: True)
+    - batch_size (int): Batch size. (default: 1000)
     - subset_seed (int): seed for selecting data subset, if applicable 
         (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
@@ -1182,10 +1189,11 @@ def train_encoder_clfs_by_fraction_labelled(
         train_accs[e], test_accs[e] = train_clfs_by_fraction_labelled(
             encoder, dataset, train_sampler, test_sampler, 
             labelled_fractions=labelled_fractions, num_epochs=num_epochs[e], 
-            freeze_features=freeze_features[e], subset_seed=subset_seed, 
-            use_cuda=use_cuda, encoder_label=encoder_labels[e], 
-            plot_accuracies=plot_accuracies, ax=ax, plot_chance=False, 
-            color=colors[e], marker=markers[e], verbose=verbose
+            freeze_features=freeze_features[e], batch_size=batch_size, 
+            subset_seed=subset_seed, use_cuda=use_cuda, 
+            encoder_label=encoder_labels[e], plot_accuracies=plot_accuracies, 
+            ax=ax, plot_chance=False, color=colors[e], marker=markers[e], 
+            verbose=verbose
             )
     
     if plot_accuracies:

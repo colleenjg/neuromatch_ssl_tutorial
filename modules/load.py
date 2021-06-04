@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -162,8 +163,10 @@ class ResNet18_with_encoder(torchvision.models.resnet.ResNet):
         self.__dict__.update(resnet18.__dict__)
         
         self.pretrained = pretrained
+        self.input_dim = (3, 224, 224)
 
         self._define_encoder()
+        self.feat_size = self._get_feat_extr_output_size(self.input_dim)
 
     @property
     def untrained(self):
@@ -185,6 +188,16 @@ class ResNet18_with_encoder(torchvision.models.resnet.ResNet):
             self.layer3,
             self.layer4,
         )
+
+    def _get_feat_extr_output_size(self, input_dim):
+        dummy_tensor = torch.ones(1, *input_dim)
+        reset_training = self.training
+        self.eval()
+        with torch.no_grad():   
+            output_dim = self.encoder(dummy_tensor).shape
+        if reset_training:
+            self.train()
+        return np.product(output_dim)
 
     def get_features(self, X):
         with torch.no_grad():
@@ -219,6 +232,8 @@ class VGG16_with_encoder(torchvision.models.vgg.VGG):
         self.pretrained = pretrained
 
         self._define_encoder()
+        self.input_dim = (3, 64, 64)
+        self.feat_size = self._get_feat_extr_output_size(self.input_dim)
 
     @property
     def untrained(self):
@@ -229,7 +244,17 @@ class VGG16_with_encoder(torchvision.models.vgg.VGG):
         return False
 
     def _define_encoder(self):
-        self.encoder = self.features
+        self.encoder = self.features # alias
+
+    def _get_feat_extr_output_size(self, input_dim):
+        dummy_tensor = torch.ones(1, *input_dim)
+        reset_training = self.training
+        self.eval()
+        with torch.no_grad():   
+            output_dim = self.encoder(dummy_tensor).shape
+        if reset_training:
+            self.train()
+        return np.product(output_dim)
 
     def get_features(self, X):
         with torch.no_grad():
@@ -277,6 +302,10 @@ class SimCLR_spijk_with_encoder(nn.Module):
 
             self.load_state_dict(state_dict)
 
+        self.input_dim = (3, 224, 224)
+        self.feat_size = self._get_feat_extr_output_size(self.input_dim)
+
+
     @property
     def untrained(self):
         return self._untrained
@@ -284,6 +313,16 @@ class SimCLR_spijk_with_encoder(nn.Module):
     @property
     def vae(self):
         return False
+
+    def _get_feat_extr_output_size(self, input_dim):
+        dummy_tensor = torch.ones(1, *input_dim)
+        reset_training = self.training
+        self.eval()
+        with torch.no_grad():   
+            output_dim = self.encoder(dummy_tensor).shape
+        if reset_training:
+            self.train()
+        return np.product(output_dim)
 
     def get_features(self, X):
         with torch.no_grad():

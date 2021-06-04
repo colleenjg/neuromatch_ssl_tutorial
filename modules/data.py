@@ -646,17 +646,20 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         if self.simclr and self.spijk:
             X = self._preprocess_simclr_spijk(X)
         else:
-            if self.torchvision_transforms is not None:
-                X = self.torchvision_transforms()(X)
-
-            if self.resize is not None:
-                X = self.resize_transform(X)
-
             if self.rgb_expand:
                 X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=-3)
 
             if self._ch_expand:
                 X = np.expand_dims(X, axis=-3)
+
+            X = torch.tensor(X)
+
+            if self.resize is not None:
+                X = self.resize_transform(X)
+
+            if self.torchvision_transforms is not None:
+                X = self.torchvision_transforms()(X)
+
 
         y = torch.tensor(y)
 
@@ -665,15 +668,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 X_aug = self.simclr_transforms(X)
                 X = self.simclr_transforms(X) # do this second
             else:
-                X = torch.tensor(X)
                 X_aug = self.simclr_transforms(X)
             returns = (X, X_aug, y)
-
         else:
-            X = torch.tensor(X)
             returns = (X, y)
 
-        if self.return_indices:
+        if self.return_indices():
             returns = (X, y) + (idx, )
 
         return returns
