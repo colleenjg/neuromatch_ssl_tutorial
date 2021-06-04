@@ -1,7 +1,7 @@
 import os
+import warnings
 
 import numpy as np
-from PIL import Image
 import torch
 from torch import nn
 import torchvision
@@ -788,7 +788,8 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         fig.suptitle(title, y=1.04)
 
 
-def calculate_torch_RSM(features, features_comp=None, stack=False):
+def calculate_torch_RSM(features, features_comp=None, stack=False, 
+                        mem_thr=1e5):
     """
     calculate_torch_RSM(features)
 
@@ -806,6 +807,12 @@ def calculate_torch_RSM(features, features_comp=None, stack=False):
     - stack (bool): if True, feature and features_comp are first stacked 
         along the items dimension, and the resulting matrix is compared to 
         itself. (default: False)
+    - mem_thr (num): limit of features size at which RSM is calculated in 
+        blocks to avoid out-of-memory errors. (default: 5e5) 
+
+    Returns:
+    - rsm (2D torch Tensor): similarity matrix 
+        (nbr features items x nbr features_comp items)
     """
 
     if features_comp is None:
@@ -824,11 +831,26 @@ def calculate_torch_RSM(features, features_comp=None, stack=False):
         features = torch.cat((features, features_comp), dim=0)
         features_comp = features
 
-    rsm = nn.functional.cosine_similarity(
-        torch.flatten(features, start_dim=1).unsqueeze(0), 
-        torch.flatten(features_comp, start_dim=1).unsqueeze(1), 
-        dim=2
-        )
+
+    n_blocks = int(np.ceil(np.product(features.shape) / mem_thr))
+    n = int(np.ceil(len(features) / n_blocks))
+
+    if n_blocks > 1:
+        warnings.warn(f"Calculating RSM in {n_blocks} blocks to avoid "
+            "out-of-memory errors.")
+
+    rsm = torch.empty(len(features), len(features))
+
+    for i in range(n_blocks):
+        i_slice = slice(i * n, (i + 1) * n)
+        for j in range(n_blocks):
+            j_slice = slice(j * n, (j + 1) * n)
+            rsm[i_slice, j_slice] = \
+                nn.functional.cosine_similarity(
+                torch.flatten(features[i_slice], start_dim=1).unsqueeze(1), 
+                torch.flatten(features_comp[j_slice], start_dim=1).unsqueeze(0), 
+                dim=2
+                )
     
     return rsm
 
@@ -853,6 +875,10 @@ def calculate_numpy_RSM(features, features_comp=None, stack=False,
         itself. (default: False)
     - centered (bool): if True, the mean across features is first subtracted 
         for each item. (default: False)  
+
+    Returns:
+    - rsm (2D np array): similarity matrix 
+        (nbr features items x nbr features_comp items)
     """
 
     if features_comp is None:

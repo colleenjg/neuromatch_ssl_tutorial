@@ -867,6 +867,9 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
     prev_return_indices = dataset.return_indices()
     dataset.return_indices(True) # temporarily have the dataset return indices
 
+    # import pdb
+    # pdb.set_trace()
+
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=100, sampler=sampler
         )
@@ -894,6 +897,7 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
 
         all_features = torch.cat(all_features)
         all_latents = np.concatenate(all_latents)
+
         rsm = data.calculate_torch_RSM(all_features).cpu().numpy()
 
         encoder_rsms.append(rsm)
