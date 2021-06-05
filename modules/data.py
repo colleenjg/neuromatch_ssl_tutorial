@@ -533,6 +533,11 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         """
         Initialized a custom Torch dataset for dSprites, and sets attributes.
 
+        NOTE: Always check that transforms behave as expected (e.g., produce   
+        outputs in expected range), as datatypes (e.g., torch vs numpy, 
+        uint8 vs float32) can change the behaviours of certain transforms, 
+        e.g. ToPILImage.
+
         Required args:
         - dSprites (dSpritesDataset): dSprites dataset
 
@@ -643,23 +648,23 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         X = self.X[idx].astype(np.float32)
         y = self.y[idx]
 
+        if self.rgb_expand:
+            X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=-3)
+
+        if self._ch_expand:
+            X = np.expand_dims(X, axis=-3)
+
+        X = torch.tensor(X)
+
+
         if self.simclr and self.spijk:
             X = self._preprocess_simclr_spijk(X)
         else:
-            if self.rgb_expand:
-                X = np.repeat(np.expand_dims(X, axis=-3), 3, axis=-3)
-
-            if self._ch_expand:
-                X = np.expand_dims(X, axis=-3)
-
-            X = torch.tensor(X)
-
             if self.resize is not None:
                 X = self.resize_transform(X)
 
             if self.torchvision_transforms is not None:
                 X = self.torchvision_transforms()(X)
-
 
         y = torch.tensor(y)
 
@@ -696,13 +701,6 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                                 ((images) x height x width x channels).
         """
 
-    
-        if self.rgb_expand:
-            X = np.repeat(np.expand_dims(X, axis=-1), 3, axis=-1)
-        
-        if self._ch_expand:
-            X = np.expand_dims(X, axis=-1)
-
         if X.max() > 1 or X.min() < 0:
             raise NotImplementedError(
                 "Expected X to be between 0 and 1 for SimCLR transform."
@@ -713,8 +711,9 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 "Slicing dataset with multiple index values at once not "
                 "supported, due to use of PIL torchvision transforms."
                 )
-
-        X = torchvision.transforms.ToPILImage(mode="RGB")(np.int8(X))
+        
+        # input must be torch Tensor to be correctly interpreted
+        X = torchvision.transforms.ToPILImage(mode="RGB")(X)
 
         return X
 
