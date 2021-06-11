@@ -210,6 +210,11 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
 
     device = "cuda" if use_cuda and torch.cuda.is_available() else "cpu"
 
+    if num_epochs is None:
+        raise NotImplementedError(
+            "Must set a number of epochs to an integer value."
+            )
+
     if encoder is None:
         encoder = nn.Identity()
         encoder.get_features = encoder.forward
@@ -217,7 +222,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         linear_input = dataset.dSprites.images[0].size
         if not freeze_features:
             raise ValueError(
-                "freeze_features must be set to True if no encoder is "
+                "freeze_features must be set to True if no encoder is passed"
                 f", but is set to {freeze_features}."
                 )
     else:
