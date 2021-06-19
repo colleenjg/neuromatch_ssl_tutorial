@@ -443,7 +443,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
         dim=1
         )
     
-    if neg_pairs and (denominator < 1e-8).any(): # clamp, just in case
+    if (denominator < 1e-8).any(): # clamp, just in case
         denominator = torch.clamp(denominator, 1e-8)
 
     loss = torch.mean(-torch.log(numerator / denominator))
@@ -453,7 +453,7 @@ def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
 
 def train_simclr(encoder, dataset, train_sampler, num_epochs=50, 
                  batch_size=1000, neg_pairs="all", use_cuda=True, 
-                 verbose=False):
+                 loss_fct=None, verbose=False):
     """
     Function to train an encoder using the SimCLR loss.
     
@@ -475,6 +475,8 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
         examples or 0.05 for 5% of negative pairs. 
         (default: "all")
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
+    - loss_fct (function): loss function. If None, default contrastive loss is 
+        used. (default: None)
     - verbose (bool): If True, first batch RSMs are plotted at each epoch. 
         (default: False)
 
@@ -511,6 +513,10 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
     encoder.train()
     projector.train()
 
+    if neg_pairs != "all" and loss_fct is not None:
+        raise ValueError("If neg_pairs is not 'all', must use default "
+            "loss function by passing None to loss_fct.")
+
     loss_arr = []
     for epoch_n in tqdm(range(num_epochs)):
         total_loss = 0
@@ -521,7 +527,16 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
             features_aug = encoder(X_aug.to(device))
             z = projector(features)
             z_aug = projector(features_aug)
-            loss = contrastiveLoss(z, z_aug, neg_pairs=neg_pairs)
+            if loss_fct is None:
+                loss = contrastiveLoss(z, z_aug, neg_pairs=neg_pairs)
+            else:
+                try:
+                    loss = loss_fct(z, z_aug)
+                except Exception as err:
+                    err.args = (
+                        f"{err.args[0]} (Raised by custom loss function.)", 
+                        )
+                    raise err
             total_loss += loss.item()
             num_total += len(z)
             loss.backward()
@@ -843,7 +858,8 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None,
 
 
 def plot_model_RSMs(encoders, dataset, sampler, titles=None, 
-                    sorting_latent="shape", batch_size=1000, use_cuda=True):
+                    sorting_latent="shape", batch_size=1000, RSM_fct=None, 
+                    use_cuda=True):
     """
     plot_model_RSMs(encoders, dataset, sampler)
 
@@ -860,6 +876,8 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
     - sorting_latent (str): name of latent class/feature to sort rows 
         and columns by. (default: "shape")
     - batch_size (int): Batch size. (default: 1000)
+    - RSM_fct (function): torch function to calculate RSM. If None, default 
+        RSM calculation function is used. (default: None)
     - use_cuda (bool): If True, cuda is used, if available. (default: True)
     
     Returns:
@@ -907,7 +925,16 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         all_features = torch.cat(all_features)
         all_latents = np.concatenate(all_latents)
 
-        rsm = data.calculate_torch_RSM(all_features).cpu().numpy()
+        if RSM_fct is None:
+            rsm = data.calculate_torch_RSM(all_features).cpu().numpy()
+        else:
+            try:
+                rsm = RSM_fct(all_features).cpu().numpy()
+            except Exception as err:
+                err.args = (
+                    f"{err.args[0]} (Raised by custom RSM function.)", 
+                    )
+                raise err
 
         encoder_rsms.append(rsm)
         encoder_latents.append(all_latents)
@@ -1001,6 +1028,9 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             print("Using the following default labelled fraction values: "
                 f"{labelled_fraction_str}\n")
 
+    if len(labelled_fractions) == 0:
+        raise ValueError("Include at least one value in labelled_fractions.")
+
     if np.min(labelled_fractions) <= 0 or np.max(labelled_fractions) > 1:
         raise ValueError(
             "all labelled_fractions must be between (0, 1) (excl, incl)"
@@ -1019,16 +1049,18 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
     if not freeze_features: # retain original
         orig_encoder = copy.deepcopy(encoder)
 
+    num_epochs_use_all = [
+        int(np.ceil(num_epochs / np.sqrt(labelled_fraction)))
+        for labelled_fraction in labelled_fractions
+        ]
+
     n_fractions = len(labelled_fractions)
     for i in tqdm(range(n_fractions)):
-        num_epochs_use = int(
-            np.ceil(num_epochs / np.sqrt(labelled_fractions[i]))
-            )
         if not freeze_features: # obtain new fresh version
             encoder = copy.deepcopy(orig_encoder)
         _,  _, train_acc[i], test_acc[i] = train_classifier(
             encoder, dataset, train_sampler, test_sampler, 
-            num_epochs=num_epochs_use, 
+            num_epochs=num_epochs_use_all[i], 
             fraction_of_labels=labelled_fractions[i], 
             freeze_features=freeze_features, subset_seed=subset_seed, 
             batch_size=batch_size, progress_bar=False, verbose=False
@@ -1037,6 +1069,11 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
     if plot_accuracies:
         if ax is None:
             _, ax = plt.subplots(1)
+
+        labelled_fractions = np.asarray(labelled_fractions)
+        sorter = np.argsort(labelled_fractions)
+        sorted_labelled_fractions = labelled_fractions[sorter].tolist()
+
         if plot_chance:
             ax.axhline(y=100 / dataset.num_classes, ls="dashed", color="gray", 
             alpha=0.7
@@ -1050,13 +1087,14 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
             test_label = "test"
 
         ax.plot(
-            labelled_fractions, train_acc, ls="dashed", 
+            sorted_labelled_fractions, train_acc[sorter], ls="dashed", 
             label=training_label, color=color, marker=marker, markersize=8, 
             alpha=0.4
             )
         ax.plot(
-            labelled_fractions, test_acc, lw=3, label=test_label, 
-            color=color, marker=marker, markersize=8, alpha=0.8
+            sorted_labelled_fractions, test_acc[sorter], lw=3, 
+            label=test_label, color=color, marker=marker, markersize=8, 
+            alpha=0.8
             )
 
         ax.set_xlabel("Fraction of labelled data used (log scale)")
@@ -1065,9 +1103,9 @@ def train_clfs_by_fraction_labelled(encoder, dataset, train_sampler,
 
         from matplotlib.ticker import ScalarFormatter
         ax.set_xscale("log")
-        ax.set_xticks(labelled_fractions)
-        if len(labelled_fractions) < 8:
-            ax.set_xticklabels(labelled_fractions)
+        ax.set_xticks(sorted_labelled_fractions)
+        if len(sorted_labelled_fractions) < 8:
+            ax.set_xticklabels(sorted_labelled_fractions)
         ax.xaxis.set_major_formatter(ScalarFormatter())
 
         if title is not None:
@@ -1161,7 +1199,6 @@ def train_encoder_clfs_by_fraction_labelled(
         if verbose:
             print("Using the following default labelled fraction values: "
             f"{labelled_fraction_str}\n")
-
 
     if isinstance(freeze_features, list):
         if len(freeze_features) != len(encoders):
