@@ -934,6 +934,7 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
                 err.args = (
                     f"{err.args[0]} (Raised by custom RSM function.)", 
                     )
+                dataset.return_indices(prev_return_indices)
                 raise err
 
         encoder_rsms.append(rsm)
