@@ -3,3 +3,8 @@ images
 checkpoints/additional
 
 *.txt
+
+dsprites/*
+!dsprites/dsprites_subset.npz
+!dsprites/dsprites_downsampled.npz
+
