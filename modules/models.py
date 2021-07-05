@@ -351,9 +351,9 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
 
 
 
-def contrastiveLoss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
+def contrastive_loss(proj_feat1, proj_feat2, temperature=0.5, neg_pairs="all"):
     """
-    contrastiveLoss(proj_feat1, proj_feat2)
+    contrastive_loss(proj_feat1, proj_feat2)
 
     Returns contrastive loss, given sets of projected features, with positive 
     pairs matched along the batch dimension.
@@ -528,7 +528,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
             z = projector(features)
             z_aug = projector(features_aug)
             if loss_fct is None:
-                loss = contrastiveLoss(z, z_aug, neg_pairs=neg_pairs)
+                loss = contrastive_loss(z, z_aug, neg_pairs=neg_pairs)
             else:
                 try:
                     loss = loss_fct(z, z_aug)

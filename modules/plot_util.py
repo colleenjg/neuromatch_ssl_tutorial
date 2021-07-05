@@ -1,3 +1,5 @@
+import copy
+
 from matplotlib import pyplot as plt
 from matplotlib import colors as mplcol
 import numpy as np
@@ -12,6 +14,8 @@ def add_annotations(image, annotations=None, center=None, color=None):
         image_centers and image_double_centers are iterables. (default: None)    
     """
     
+    image = copy.deepcopy(image)
+
     HEI, WID = 64, 64
     BUFFER = 16
     X_SPACING = 11
@@ -140,7 +144,7 @@ def plot_dsprites_images(images, ncols=5, title=None, annotations=None,
                 image = add_annotations(
                     image, annotations=annotations, center=centers[ax_i]
                     )
-            ax.imshow(images[ax_i], cmap=cmap, interpolation='nearest')
+            ax.imshow(image, cmap=cmap, interpolation='nearest')
             ax.set_xticks([])
             ax.set_yticks([])
         else:
