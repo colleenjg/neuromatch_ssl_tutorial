@@ -278,9 +278,9 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         num_total = 0
         for iter_data in train_dataloader:
             if dataset.simclr:
-                X, _, y = iter_data # ignore augmented X
+                X, _, y, _ = iter_data # ignore augmented X and indices
             else:
-                X, y = iter_data
+                X, y, _ = iter_data # ignore indices
             
             classification_optimizer.zero_grad()
 
@@ -310,9 +310,9 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         num_total = 0
         for iter_data in dataloader:
             if dataset.simclr:
-                X, _, y = iter_data # ignore augmented X
+                X, _, y, _ = iter_data # ignore augmented X and indices
             else:
-                X, y = iter_data
+                X, y, _ = iter_data # ignore indices
 
             with torch.no_grad():
                 features = encoder.get_features(X.to(device))
@@ -521,7 +521,7 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
     for epoch_n in tqdm(range(num_epochs)):
         total_loss = 0
         num_total = 0
-        for batch_idx, (X, X_aug, Y) in enumerate(train_dataloader):
+        for batch_idx, (X, X_aug, Y, _) in enumerate(train_dataloader):
             optimizer.zero_grad()
             features = encoder(X.to(device))
             features_aug = encoder(X_aug.to(device))
@@ -745,7 +745,7 @@ def train_vae(encoder, dataset, train_sampler, num_epochs=100, batch_size=500,
     for epoch in tqdm(range(num_epochs)):
         total_loss = 0
         num_total = 0
-        for batch_idx, (X, Y) in enumerate(train_dataloader):
+        for batch_idx, (X, _, _) in enumerate(train_dataloader):
             optimizer.zero_grad()
             recon_X_logits, mu, logvar = decoder(*encoder(X.to(device)))
             loss = vae_loss_function(
@@ -834,7 +834,7 @@ def plot_vae_reconstructions(encoder, decoder, dataset, indices, title=None,
         )
 
     Xs, recon_Xs = [], []
-    for X, _ in dataloader:
+    for X, _, _ in dataloader:
         with torch.no_grad():
             recon_X = decoder.reconstruct(
                 encoder.get_features(X.to(device))
@@ -894,9 +894,6 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         raise ValueError("If providing titles, must provide as many as "
             f"encoders ({len(encoders)}).")
 
-    prev_return_indices = dataset.return_indices()
-    dataset.return_indices(True) # temporarily have the dataset return indices too
-
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, sampler=sampler
         )
@@ -934,7 +931,6 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
                 err.args = (
                     f"{err.args[0]} (Raised by custom RSM function.)", 
                     )
-                dataset.return_indices(prev_return_indices)
                 raise err
 
         encoder_rsms.append(rsm)
@@ -946,8 +942,6 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
         else:
             encoder.eval()
         encoder.to(reset_encoder_device)
-
-    dataset.return_indices(prev_return_indices) # revert setting
 
     data.plot_dsprites_RSMs(
         dataset.dSprites, encoder_rsms, encoder_latents, 

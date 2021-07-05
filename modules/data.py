@@ -573,7 +573,6 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
         self.dSprites = dSprites
         self.target_latent = target_latent
-        self._return_indices = False
 
         self.X = self.dSprites.images
         self.y = self.dSprites.get_latent_classes(
@@ -674,14 +673,9 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 X = self.simclr_transforms(X) # do this second
             else:
                 X_aug = self.simclr_transforms(X)
-            returns = (X, X_aug, y)
+            return (X, X_aug, y, idx)
         else:
-            returns = (X, y)
-
-        if self.return_indices():
-            returns = (X, y) + (idx, )
-
-        return returns
+            return (X, y, idx)
 
 
     def _preprocess_simclr_spijk(self, X):
@@ -718,23 +712,6 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         return X
 
 
-    def return_indices(self, return_idx=None):
-        """
-        self.return_indices()
-
-        Allows dataset to return indices when using __getitem__() method.
-        """
-
-        if return_idx is not None:
-            if not isinstance(return_idx, bool):
-                raise ValueError(
-                    "If not None, return_idx must be a boolean, but found "
-                    f"{type(return_idx)}"
-                    )
-            self._return_indices = return_idx
-        return self._return_indices
-
-
     def show_images(self, indices=None, num_images=10, ncols=5, randst=None):
         """
         self.show_images()
@@ -769,10 +746,10 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         Xs, X_augs = [], []
         for idx in indices:
             if self.simclr:
-                X, X_aug, _ = self[idx]
+                X, X_aug, _, _ = self[idx]
                 X_augs.append(X_aug.numpy())
             else:
-                X, _ = self[idx]
+                X, _, _ = self[idx]
             Xs.append(X.numpy())
 
         title = f"{num_images} dataset images"

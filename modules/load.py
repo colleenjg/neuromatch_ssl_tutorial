@@ -80,9 +80,20 @@ def load_encoder(save_direc, model_type="simclr", dataset_type="full",
                     "the biased or bias_ctrl datasets."
                     )
             num_epochs = 125
+    
+    elif model_type == "supervised":
+        model_name = model_type
+        batch_size = 1000
+        num_epochs = 10
+
+    elif model_type == "random":
+        model_name = model_type
+        batch_size = 0
+        num_epochs = 0
+
     else:
-        raise ValueError("Recorded model types only include 'vae' and "
-            f"'simclr', but not '{model_type}'.")
+        raise ValueError("Recorded model types only include 'supervised', "
+            f"'random', 'vae', 'simclr', but not '{model_type}'.")
         
     encoder_path = (
         f"{model_type}_encoder{dataset_type_str}{neg_str}_{num_epochs}ep_"
