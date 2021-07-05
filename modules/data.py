@@ -465,7 +465,8 @@ class dSpritesDataset():
         return shape_names
 
 
-    def show_images(self, indices=None, num_images=10, randst=None):
+    def show_images(self, indices=None, num_images=10, randst=None, 
+                    annotations=None):
         """
         self.show_images()
 
@@ -480,6 +481,8 @@ class dSpritesDataset():
         - randst (np.random.RandomState): seed or random state to use if 
             sampling images. If None, the global state is used.
             (default: None)
+        - annotations (str): If not None, annotations are added to images, 
+            e.g., 'posX_quadrants'. (default: None)
         """
 
         if indices is None:
@@ -497,7 +500,20 @@ class dSpritesDataset():
             num_images = len(indices)
 
         imgs = self.images[indices]
-        fig, axes = plot_util.plot_dsprites_images(imgs)
+        
+        centers = None
+        annotation_str = ""
+        y = 1.04
+        if annotations is not None:
+            centers = self.get_latent_values(
+                indices, latent_class_names=["posX", "posY"]
+                )
+            annotation_str = "\nwith annotations (red)"
+            y = 1.1
+
+        fig, axes = plot_util.plot_dsprites_images(
+            imgs, annotations=annotations, centers=centers
+            )
         ncols = axes.shape[1]
         axes = axes.flatten()
 
@@ -506,7 +522,8 @@ class dSpritesDataset():
         shape_names = self.get_shapes_from_values(latent_values[:, 0])
 
         fig.suptitle(
-            f"{num_images} images sampled from the dSprites dataset", y=1.04
+            (f"{num_images} images sampled from the dSprites "
+            f"dataset{annotation_str}"), y=y
             )
         for ax_i, ax in enumerate(axes.flatten()):
             if ax_i < num_images:
@@ -712,7 +729,8 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         return X
 
 
-    def show_images(self, indices=None, num_images=10, ncols=5, randst=None):
+    def show_images(self, indices=None, num_images=10, ncols=5, randst=None, 
+                    annotations=None):
         """
         self.show_images()
 
@@ -727,6 +745,8 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         - randst (np.random.RandomState): seed or random state to use if 
             sampling images. If None, the global state is used. (Does not 
             control SimCLR transformations.) (default: None)
+        - annotations (str): If not None, annotations are added to images, 
+            e.g., 'posX_quadrants'. (default: None)
         """
 
         if indices is None:
@@ -743,6 +763,16 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         else:
             num_images = len(indices)
 
+        centers = None
+        if annotations is not None:
+            if self.simclr and self.spijk == "train":
+                # all data is augmented, so centers cannot be identified
+                centers = None
+            else:
+                centers = self.dSprites.get_latent_values(
+                    indices, latent_class_names=["posX", "posY"]
+                    ).tolist()
+
         Xs, X_augs = [], []
         for idx in indices:
             if self.simclr:
@@ -756,11 +786,19 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         if self.simclr:
             title = f"{title} and augmentations"
             fig, _ = plot_util.plot_dsprite_image_doubles(
-                Xs, X_augs, "Augm.", ncols=ncols
+                Xs, X_augs, "Augm.", ncols=ncols, annotations=annotations, 
+                centers=[centers, None]
                 )
         else:
-            fig, _ = plot_util.plot_dsprites_images(Xs, ncols=ncols)
+            fig, _ = plot_util.plot_dsprites_images(
+                Xs, ncols=ncols, annotations=annotations, centers=centers
+                )
         
+        y = 1.04
+        if annotations is not None:
+            title = f"{title}\nwith annotations (red)"
+            y = 1.1
+
         fig.suptitle(title, y=1.04)
 
 
