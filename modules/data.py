@@ -546,7 +546,7 @@ class dSpritesDataset():
 class dSpritesTorchDataset(torch.utils.data.Dataset):
     def __init__(self, dSprites, target_latent="shape", 
                  torchvision_transforms=None, resize=None, rgb_expand=False, 
-                 simclr=False, spijk=None, simclr_transforms=None):
+                 simclr=False, simclr_mode="train", simclr_transforms=None):
         """
         Initialized a custom Torch dataset for dSprites, and sets attributes.
 
@@ -571,14 +571,14 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
             (default: False)
         - simclr (bool or str): if True, SimCLR-specific transformations are 
             applied. (default: False)
-        - spijk (str): If not None, the SimCLR transforms are drawn from this 
-            implementation (https://github.com/Spijkervet/SimCLR), using 
-            either "train" or "test" transforms, as specified. All other 
-            transforms are overridden. Ignored if simclr is False. 
-            (default: None) 
+        - simclr_mode (str): If not None, determines whether data is returned 
+            in 'train' mode (with augmentations) or 'test' mode (no augmentations). 
+            Ignored if simclr is False. 
+            (default: 'train') 
         - simclr_transforms (torchvision.transforms): SimCLR-specific 
-            transforms. Used only if simclr is True, and spikj is None. If 
-            None, default SimCLR transforms are applied. (default: None)
+            transforms. If "spijk", then SimCLR transforms from (https://github.com/Spijkervet/SimCLR), 
+            are ised. If None, default SimCLR transforms are applied. Ignored if 
+            simclr is False. (default: None)
 
         Sets attributes:
         - X (2 or 3D np array): image array 
@@ -609,18 +609,22 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                 f"found {len(self.X.shape)}.")
 
         self.simclr = simclr
-        self.spijk = None
+        self.simclr_mode = None
+        self.simclr_transforms = None
         if self.simclr:
-            self.spijk = spijk
-            if self.spijk is not None:
+            self.simclr_mode = simclr_mode
+            self.spijk = (simclr_transforms == "spijk")
+            if self.simclr_mode not in ["train", "test"]:
+                raise ValueError("simclr_mode must be 'train' or 'test', but "
+                    f"found {self.simclr_mode}.")
+
+            if self.spijk:
                 torchvision_transforms = False
                 if len(self.X[0].shape) == 2:
                     rgb_expand = True
-                if self.spijk not in ["train", "test"]:
-                    raise ValueError("spijk must be 'train' or 'test', but "
-                        f"found {self.spijk}.")
+
                 from simclr.modules.transformations import TransformsSimCLR
-                if self.spijk == "train":
+                if self.simclr_mode == "train":
                     self.simclr_transforms = \
                         TransformsSimCLR(size=224).train_transform
                 else:
@@ -628,12 +632,15 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                         TransformsSimCLR(size=224).test_transform
 
             else:
-                self.simclr_transforms = simclr_transforms
-                if self.simclr_transforms is None:
-                    self.simclr_transforms = \
-                        torchvision.transforms.RandomAffine(
-                            degrees=90, translate=(0.2, 0.2), scale=(0.8, 1.2)
-                        )
+                if self.simclr_mode == "train":
+                    self.simclr_transforms = simclr_transforms
+                    if self.simclr_transforms is None:
+                        self.simclr_transforms = \
+                            torchvision.transforms.RandomAffine(
+                                degrees=90, translate=(0.2, 0.2), scale=(0.8, 1.2)
+                            )
+                else:
+                    self.simclr_transforms = None
 
         self.torchvision_transforms = torchvision_transforms
         
@@ -685,12 +692,12 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         y = torch.tensor(y)
 
         if self.simclr:
-            if self.spijk:
-                X_aug = self.simclr_transforms(X)
-                X = self.simclr_transforms(X) # do this second
+            if self.simclr_transforms is None: # e.g. in test mode
+                X_aug1, X_aug2 = X, X
             else:
-                X_aug = self.simclr_transforms(X)
-            return (X, X_aug, y, idx)
+                X_aug1 = self.simclr_transforms(X)
+                X_aug2 = self.simclr_transforms(X) 
+            return (X_aug1, X_aug2, y, idx)
         else:
             return (X, y, idx)
 
@@ -734,7 +741,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
         """
         self.show_images()
 
-        Plots dSprites images, as well as their augmentations if applicable.
+        Plots dSprites images, or their augmentations if applicable.
 
         Optional args:
         - indices (array-like): indices of images to plot. If None, they are 
@@ -765,7 +772,7 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
 
         centers = None
         if annotations is not None:
-            if self.simclr and self.spijk == "train":
+            if self.simclr and self.simclr_mode == "train":
                 # all data is augmented, so centers cannot be identified
                 centers = None
             else:
@@ -773,23 +780,25 @@ class dSpritesTorchDataset(torch.utils.data.Dataset):
                     indices, latent_class_names=["posX", "posY"]
                     ).tolist()
 
-        Xs, X_augs = [], []
+        Xs, X_augs1, X_augs2 = [], [], []
         for idx in indices:
             if self.simclr:
-                X, X_aug, _, _ = self[idx]
-                X_augs.append(X_aug.numpy())
+                X_aug1, X_aug2, _, _ = self[idx]
+                X_augs1.append(X_aug1.numpy())
+                X_augs2.append(X_aug2.numpy())
             else:
                 X, _, _ = self[idx]
-            Xs.append(X.numpy())
+                Xs.append(X.numpy())
 
-        title = f"{num_images} dataset images"
+        
         if self.simclr:
-            title = f"{title} and augmentations"
+            title = f"{num_images} pairs of dataset image augmentations"
             fig, _ = plot_util.plot_dsprite_image_doubles(
-                Xs, X_augs, "Augm.", ncols=ncols, annotations=annotations, 
+                X_augs1, X_augs2, ["Augm. 1", "Augm. 2"], ncols=ncols, annotations=annotations, 
                 centers=[centers, None]
                 )
         else:
+            title = f"{num_images} dataset images"
             fig, _ = plot_util.plot_dsprites_images(
                 Xs, ncols=ncols, annotations=annotations, centers=centers
                 )

@@ -242,6 +242,10 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
             "continuously would be advisable, instead of using a logistic "
             "regression.")
 
+    if hasattr(dataset, "simclr") and dataset.simclr and not dataset.simclr_mode != "test":
+        warnings.warn("Using a SimCLR dataset. Since the dataset returns 2 augmentations, "
+            "the classifier will be trained on the first augmentation of each image.")
+
     # Define datasets and dataloaders
     train_subset_sampler = data.subsample_sampler(
         train_sampler, fraction_sample=fraction_of_labels, randst=subset_seed
@@ -278,7 +282,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         num_total = 0
         for iter_data in train_dataloader:
             if dataset.simclr:
-                X, _, y, _ = iter_data # ignore augmented X and indices
+                X, _, y, _ = iter_data # ignore second X and indices
             else:
                 X, y, _ = iter_data # ignore indices
             
@@ -310,7 +314,7 @@ def train_classifier(encoder, dataset, train_sampler, test_sampler,
         num_total = 0
         for iter_data in dataloader:
             if dataset.simclr:
-                X, _, y, _ = iter_data # ignore augmented X and indices
+                X, _, y, _ = iter_data # ignore second X and indices
             else:
                 X, y, _ = iter_data # ignore indices
 
@@ -521,35 +525,35 @@ def train_simclr(encoder, dataset, train_sampler, num_epochs=50,
     for epoch_n in tqdm(range(num_epochs)):
         total_loss = 0
         num_total = 0
-        for batch_idx, (X, X_aug, Y, _) in enumerate(train_dataloader):
+        for batch_idx, (X_aug1, X_aug2, Y, _) in enumerate(train_dataloader):
             optimizer.zero_grad()
-            features = encoder(X.to(device))
-            features_aug = encoder(X_aug.to(device))
-            z = projector(features)
-            z_aug = projector(features_aug)
+            features_aug1 = encoder(X_aug1.to(device))
+            features_aug2 = encoder(X_aug2.to(device))
+            z_aug1 = projector(features_aug1)
+            z_aug2 = projector(features_aug2)
             if loss_fct is None:
-                loss = contrastive_loss(z, z_aug, neg_pairs=neg_pairs)
+                loss = contrastive_loss(z_aug1, z_aug2, neg_pairs=neg_pairs)
             else:
                 try:
-                    loss = loss_fct(z, z_aug)
+                    loss = loss_fct(z_aug1, z_aug2)
                 except Exception as err:
                     err.args = (
                         f"{err.args[0]} (Raised by custom loss function.)", 
                         )
                     raise err
             total_loss += loss.item()
-            num_total += len(z)
+            num_total += len(z_aug1)
             loss.backward()
             optimizer.step()
             if verbose and batch_idx == 1 and not ((epoch_n + 1) % 10):
                 sorter = np.argsort(Y)
                 sorted_targets = Y[sorter]
                 stacked_rsm = data.calculate_torch_RSM(
-                    features.detach()[sorter], features_aug.detach()[sorter], 
+                    features_aug1.detach()[sorter], features_aug2.detach()[sorter], 
                     stack=True
                     ).cpu().numpy()
 
-                title = (f"Features (true / augm.): Epoch {epoch_n} "
+                title = (f"Features (augm. 1 / augm. 2): Epoch {epoch_n} "
                     f"(batch {batch_idx})")
                 sorted_target_values = \
                     dataset.dSprites.get_latent_values_from_classes(
@@ -893,6 +897,10 @@ def plot_model_RSMs(encoders, dataset, sampler, titles=None,
     if titles is not None and len(encoders) != len(titles):
         raise ValueError("If providing titles, must provide as many as "
             f"encoders ({len(encoders)}).")
+
+    if hasattr(dataset, "simclr") and dataset.simclr and not dataset.simclr_mode != "test":
+        warnings.warn("Using a SimCLR dataset. Since the dataset returns 2 augmentations, "
+            "RSMs will be calculated for the first augmentation of each image.")
 
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, sampler=sampler

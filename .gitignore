@@ -1,4 +1,7 @@
 __pycache__
+.ipynb_checkpoints
+.vscode
+
 additional
 checkpoints/additional
 
@@ -7,4 +10,6 @@ checkpoints/additional
 dsprites/*
 !dsprites/dsprites_subset.npz
 !dsprites/dsprites_downsampled.npz
+
+
 

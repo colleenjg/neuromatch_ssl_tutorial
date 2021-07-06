@@ -63,7 +63,7 @@ def load_encoder(save_direc, model_type="simclr", dataset_type="full",
             "\n\tscale=(0.8, 1.2)")
         simclr_transforms_str = "_deg90_trans0-2_scale0-8to1-2"
         if dataset_type == "full":
-            num_epochs = 50
+            num_epochs = 60
             if neg_pairs != "all":
                 neg_pairs = int(neg_pairs)
                 if neg_pairs != 2:
@@ -79,7 +79,7 @@ def load_encoder(save_direc, model_type="simclr", dataset_type="full",
                     "No saved model for SimCLR with few negative pairs using "
                     "the biased or bias_ctrl datasets."
                     )
-            num_epochs = 125
+            num_epochs = 150
     
     elif model_type == "supervised":
         model_name = model_type

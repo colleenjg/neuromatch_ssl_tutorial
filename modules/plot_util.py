@@ -163,7 +163,8 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5,
     Required args:
     - images (list): list of images
     - image_doubles (list): list of image doubles (same length as images)
-    - doubles_str (str): string that specified what the doubles are.
+    - doubles_str (str or list): string that specified what the doubles are, 
+        or list if specifying both images and image_doubles.
 
     Optional args:
     - ncols (int): number of columns. (default: 5)
@@ -239,11 +240,17 @@ def plot_dsprite_image_doubles(images, image_doubles, doubles_str, ncols=5,
     if title is not None:
         fig.suptitle(title, y=1.04)
 
+    images_str = "Images"
+    if isinstance(doubles_str, list):
+        if len(doubles_str) != 2:
+            raise ValueError("If 'doubles_str' is a list, it must be of length 2.")
+        images_str, doubles_str = doubles_str
+
     x_left = axes[0, 0].get_position().x0
     x_right = axes[-1, -1].get_position().x1
     x_ext = (x_right - x_left) / 30
     for r, row_start_ax in enumerate(axes[:, 0]):
-        ylabel = "Images" if not r % 2 else doubles_str
+        ylabel = images_str if not r % 2 else doubles_str
         row_start_ax.set_ylabel(ylabel)
 
         if r != 0 and not r % 2:
