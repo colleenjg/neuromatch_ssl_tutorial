@@ -7,7 +7,7 @@ checkpoints/additional
 
 *.txt
 
-dsprites/*
+dsprites/*.npz
 !dsprites/dsprites_subset.npz
 !dsprites/dsprites_downsampled.npz
 
